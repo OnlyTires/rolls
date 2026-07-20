@@ -1,0 +1,1671 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>OnlyRolls — Provably Fair Dice · OTR · PulseChain</title>
+<link rel="icon" href="otr.gif" type="image/gif">
+<meta name="description" content="Roll under your target, win up to 99x OTR. Non-custodial dice on PulseChain — bet straight from your wallet." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0d1615; --bg-2:#111c1a; --panel:#152321; --panel-2:#0f1918;
+    --line:rgba(232,222,197,0.12); --line-strong:rgba(232,222,197,0.22);
+    --paper:#ece4d3; --muted:#8fa39c; --muted-2:#5f746d;
+    --brass:#e3a94a; --brass-dim:#8a6a37;
+    --pink:#ff3f9e; --pink-dim:rgba(255,63,158,0.18);
+    --loss:#d9695f; --win:#7fd9a8;
+    --radius:10px; --shadow:0 20px 50px rgba(0,0,0,0.45);
+    font-size:16px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(1200px 700px at 15% -10%,rgba(255,63,158,0.06),transparent 60%),
+      radial-gradient(900px 600px at 90% 0%,rgba(227,169,74,0.07),transparent 55%),
+      var(--bg);
+    color:var(--paper); font-family:'Inter',system-ui,sans-serif; min-height:100vh; line-height:1.5;
+  }
+  ::selection{background:var(--pink-dim);color:var(--paper);}
+  a{color:var(--brass);}
+  h1,h2,h3{font-family:'Rajdhani','Inter',sans-serif;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin:0;}
+  .mono{font-family:'JetBrains Mono',monospace;}
+  button{font-family:inherit;}
+  :focus-visible{outline:2px solid var(--pink);outline-offset:2px;}
+  .wrap{max-width:1180px;margin:0 auto;padding:20px 20px 60px;position:relative;z-index:1;}
+
+  /* ── cursor flame glow — fixed layer behind .wrap, so it only shows
+       through blank space/margins and never over panels or controls ── */
+  #cursorGlow{
+    position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:radial-gradient(260px circle at var(--gx,50vw) var(--gy,35vh),
+      rgba(255,148,64,0.24), rgba(255,63,158,0.13) 45%, transparent 72%);
+    filter:blur(6px);opacity:0;transition:opacity 0.5s ease;
+  }
+  #cursorGlow.active{opacity:1;animation:flameFlicker 2.6s ease-in-out infinite;}
+  @keyframes flameFlicker{
+    0%,100%{filter:blur(6px) saturate(1);}
+    50%{filter:blur(9px) saturate(1.2);}
+  }
+  @media(prefers-reduced-motion:reduce){#cursorGlow{display:none;}}
+
+  /* ── header ── */
+  header.top{
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+    padding:10px 4px 22px;border-bottom:1px solid var(--line);margin-bottom:22px;
+  }
+  .brand{
+    display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:16px;
+    width:100%;max-width:640px;
+  }
+  .brand-text{text-align:center;}
+  .brand .mark{
+    width:38px;height:38px;border-radius:8px;overflow:hidden;
+    background:conic-gradient(from 220deg,var(--brass),var(--pink),var(--brass));
+    display:flex;align-items:center;justify-content:center;
+    font-family:'Rajdhani',sans-serif;font-weight:700;color:#111;
+    box-shadow:inset 0 0 0 2px rgba(0,0,0,0.25);
+  }
+  .brand .mark img{width:100%;height:100%;object-fit:cover;display:block;}
+  .brand h1{font-size:1.35rem;}
+  .brand .tag{color:var(--muted);font-size:0.72rem;letter-spacing:0.14em;text-transform:uppercase;}
+  .header-right{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;width:100%;}
+  .net-badge{
+    display:flex;align-items:center;gap:8px;font-size:0.75rem;color:var(--muted);
+    border:1px solid var(--line);padding:6px 10px;border-radius:999px;background:rgba(0,0,0,0.2);
+  }
+  .net-dot{color:var(--muted-2);display:inline-flex;}
+  .net-dot svg{display:block;filter:drop-shadow(0 0 0 transparent);}
+  .net-dot.ok{color:var(--win);}
+  .net-dot.ok svg{filter:drop-shadow(0 0 4px var(--win));}
+  .net-dot.bad{color:var(--loss);}
+  .net-dot.bad svg{filter:drop-shadow(0 0 4px var(--loss));}
+  .status-die{display:inline-flex;vertical-align:-2px;color:var(--win);margin-right:3px;}
+  .status-die svg{display:block;filter:drop-shadow(0 0 4px var(--win));}
+  .wallet-connected-bar{
+    display:flex;align-items:center;gap:10px;font-size:0.8rem;
+    border:1px solid var(--line-strong);padding:8px 12px;border-radius:8px;background:rgba(0,0,0,0.25);
+  }
+  .wallet-addr{font-family:'JetBrains Mono',monospace;color:var(--muted);}
+  .wallet-otr{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--brass);}
+  .disconnect-btn{
+    background:transparent;border:1px solid var(--line);color:var(--muted-2);
+    font-size:0.7rem;padding:3px 8px;border-radius:4px;cursor:pointer;
+  }
+  .disconnect-btn:hover{border-color:var(--loss);color:var(--loss);}
+  #connectWalletBtn{
+    background:linear-gradient(180deg,var(--brass),#c98f36);color:#1a1208;
+    border:none;font-weight:700;letter-spacing:0.03em;padding:11px 20px;
+    border-radius:8px;cursor:pointer;font-size:0.85rem;text-transform:uppercase;
+    box-shadow:0 6px 18px rgba(227,169,74,0.25);white-space:nowrap;
+  }
+  #connectWalletBtn:hover{filter:brightness(1.06);}
+  .buy-btn{
+    display:inline-flex;align-items:center;gap:4px;text-decoration:none;
+    background:linear-gradient(180deg,var(--pink),#c72c7d);color:#fff;
+    border:none;font-weight:700;letter-spacing:0.03em;padding:11px 18px;
+    border-radius:8px;cursor:pointer;font-size:0.85rem;text-transform:uppercase;
+    box-shadow:0 6px 18px rgba(255,63,158,0.25);white-space:nowrap;
+  }
+  .buy-btn:hover{filter:brightness(1.08);}
+  .token-strip{
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:8px 4px 18px;margin-top:-6px;font-size:0.76rem;color:var(--muted);
+  }
+  .token-strip .k{text-transform:uppercase;letter-spacing:0.08em;font-size:0.68rem;color:var(--muted-2);}
+  .token-strip .v{color:var(--brass);font-size:0.8rem;}
+  .token-strip a{font-size:0.76rem;}
+  .copy-btn{
+    background:transparent;border:1px solid var(--line);color:var(--muted);
+    font-size:0.68rem;padding:3px 8px;border-radius:5px;cursor:pointer;
+  }
+  .copy-btn:hover{border-color:var(--line-strong);color:var(--paper);}
+  .claim-chip{
+    display:flex;align-items:center;gap:8px;font-size:0.8rem;
+    border:1px solid var(--pink);padding:7px 12px;border-radius:8px;background:rgba(255,63,158,0.06);
+  }
+  .claim-btn{
+    background:var(--pink);color:#fff;border:none;padding:5px 10px;
+    border-radius:5px;cursor:pointer;font-weight:700;font-size:0.72rem;
+  }
+
+  /* ── wallet modal ── */
+  .modal-overlay{
+    position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);
+    display:flex;align-items:center;justify-content:center;z-index:100;
+    opacity:0;pointer-events:none;transition:opacity 0.18s ease;
+  }
+  .modal-overlay.open{opacity:1;pointer-events:all;}
+  .modal{
+    background:var(--panel);border:1px solid var(--line-strong);border-radius:14px;
+    padding:28px 26px;width:340px;max-width:92vw;
+    box-shadow:0 30px 80px rgba(0,0,0,0.6),inset 0 1px 0 rgba(255,255,255,0.04);
+    transform:translateY(12px);transition:transform 0.2s ease;
+  }
+  .modal-overlay.open .modal{transform:none;}
+  .modal h2{font-size:1.1rem;margin-bottom:4px;}
+  .modal-sub{color:var(--muted);font-size:0.78rem;margin-bottom:20px;line-height:1.5;}
+  .modal-sub strong{color:var(--brass);}
+  .wallet-option{
+    display:flex;align-items:center;gap:14px;width:100%;padding:14px 16px;
+    background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:10px;
+    cursor:pointer;margin-bottom:10px;transition:border-color 0.15s,background 0.15s;
+    text-align:left;
+  }
+  .wallet-option:hover{border-color:var(--brass-dim);background:rgba(227,169,74,0.06);}
+  .wallet-option:last-of-type{margin-bottom:0;}
+  .wallet-icon{
+    width:40px;height:40px;border-radius:10px;object-fit:contain;
+    background:#1a2a28;display:flex;align-items:center;justify-content:center;
+    font-size:1.4rem;flex-shrink:0;
+  }
+  .wallet-name{font-weight:600;font-size:0.9rem;}
+  .wallet-hint{font-size:0.72rem;color:var(--muted);margin-top:2px;}
+  .wallet-badge{
+    margin-left:auto;font-size:0.65rem;font-weight:700;padding:3px 7px;
+    border-radius:999px;background:rgba(127,217,168,0.15);color:var(--win);
+    border:1px solid rgba(127,217,168,0.25);text-transform:uppercase;letter-spacing:0.06em;
+  }
+  .wallet-badge.not-found{background:rgba(255,255,255,0.05);color:var(--muted-2);border-color:var(--line);}
+  .modal-close{
+    display:block;width:100%;margin-top:16px;padding:10px;background:transparent;
+    border:1px solid var(--line);color:var(--muted);border-radius:8px;cursor:pointer;
+    font-size:0.82rem;
+  }
+  .modal-close:hover{border-color:var(--line-strong);color:var(--paper);}
+
+  /* ── panel ── */
+  .panel{
+    background:linear-gradient(180deg,var(--panel),var(--panel-2));
+    border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,0.03);position:relative;
+  }
+  .rivets{position:absolute;inset:0;pointer-events:none;}
+  .rivets span{
+    position:absolute;width:6px;height:6px;border-radius:50%;
+    background:rgba(232,222,197,0.15);box-shadow:inset 0 1px 1px rgba(0,0,0,0.6);
+  }
+  .rivets span:nth-child(1){top:9px;left:9px;}
+  .rivets span:nth-child(2){top:9px;right:9px;}
+  .rivets span:nth-child(3){bottom:9px;left:9px;}
+  .rivets span:nth-child(4){bottom:9px;right:9px;}
+
+  /* ── console ── */
+  .console{display:grid;grid-template-columns:380px 1fr;gap:18px;}
+  @media(max-width:900px){.console{grid-template-columns:1fr;}}
+
+  /* ── dial column ── */
+  .dial-column{padding:26px 22px 22px;display:flex;flex-direction:column;align-items:center;gap:14px;}
+  .gauge-wrap{position:relative;width:100%;max-width:320px;}
+  .gauge-label{text-align:center;color:var(--muted);font-size:0.72rem;letter-spacing:0.16em;text-transform:uppercase;margin-top:2px;}
+  .gauge-readout{text-align:center;}
+  .gauge-readout .num{font-size:2.1rem;color:var(--brass);font-family:'JetBrains Mono',monospace;font-weight:700;}
+  .gauge-readout .num small{font-size:1.1rem;color:var(--muted);}
+  .odometer{
+    display:flex;gap:4px;margin-top:6px;padding:14px 16px;
+    background:#060b0a;border-radius:8px;border:1px solid var(--line-strong);
+    box-shadow:inset 0 2px 10px rgba(0,0,0,0.6);
+  }
+  .odo-digit{
+    width:34px;height:52px;background:#0b1413;border-radius:4px;
+    display:flex;align-items:center;justify-content:center;
+    font-family:'JetBrains Mono',monospace;font-size:1.7rem;font-weight:700;
+    color:var(--muted-2);border:1px solid rgba(255,255,255,0.04);transition:color 0.25s ease;
+  }
+  .odo-digit.dot{width:14px;background:transparent;border:none;color:var(--muted-2);}
+  .odo-digit.lit{color:var(--brass);text-shadow:0 0 10px rgba(227,169,74,0.55);}
+  .odo-digit.win{color:var(--win);text-shadow:0 0 12px rgba(127,217,168,0.55);}
+  .odo-digit.lose{color:var(--loss);text-shadow:0 0 12px rgba(217,105,95,0.4);}
+  .result-banner{min-height:26px;font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;font-size:0.95rem;}
+  .result-banner.win{color:var(--win);}
+  .result-banner.lose{color:var(--loss);}
+  .result-banner.pending{color:var(--muted);}
+  .status-line{color:var(--muted);font-size:0.78rem;text-align:center;min-height:34px;}
+  .status-line a{color:var(--brass);}
+  .tx-loader{display:none;justify-content:center;padding:2px 0;}
+  .tx-loader.active{display:flex;}
+  .tx-loader .ring{
+    width:24px;height:24px;border-radius:50%;
+    background:conic-gradient(from 0deg, transparent 0deg, var(--brass) 90deg, var(--pink) 200deg, transparent 340deg);
+    -webkit-mask:radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+            mask:radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+    animation:txSpin 0.85s linear infinite;
+    filter:drop-shadow(0 0 5px rgba(255,63,158,0.35));
+  }
+  @keyframes txSpin{ to{ transform:rotate(360deg); } }
+  @media(prefers-reduced-motion:reduce){ .tx-loader .ring{animation:none;} }
+
+  /* ── controls column ── */
+  .controls-column{padding:0;}
+  .otr-balance-bar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:14px 20px;border-bottom:1px solid var(--line);
+    background:rgba(0,0,0,0.18);border-radius:var(--radius) var(--radius) 0 0;
+    flex-wrap:wrap;gap:8px;
+  }
+  .otr-balance-bar .label{font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;}
+  .otr-balance-bar .amount{font-family:'JetBrains Mono',monospace;font-size:1.05rem;font-weight:700;color:var(--brass);}
+  .otr-balance-bar .no-deposit-note{
+    font-size:0.7rem;color:var(--muted-2);
+    background:rgba(127,217,168,0.07);border:1px solid rgba(127,217,168,0.12);
+    border-radius:999px;padding:3px 9px;
+  }
+  .controls-inner{padding:20px 22px 22px;}
+  .tabs{display:flex;gap:6px;margin-bottom:16px;}
+  .tab-btn{
+    flex:1;background:transparent;border:1px solid var(--line);color:var(--muted);
+    padding:10px;border-radius:8px;cursor:pointer;font-weight:600;letter-spacing:0.06em;
+    text-transform:uppercase;font-size:0.78rem;
+  }
+  .tab-btn.active{background:rgba(227,169,74,0.1);border-color:var(--brass-dim);color:var(--brass);}
+  .field{margin-bottom:14px;}
+  .field label{display:flex;justify-content:space-between;font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;}
+  .field label .hint{color:var(--muted-2);text-transform:none;letter-spacing:0;}
+  .pair-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  input[type=number],input[type=text],select{
+    width:100%;background:#0b1413;border:1px solid var(--line-strong);color:var(--paper);
+    padding:11px 12px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:0.95rem;
+  }
+  input[type=number]:focus,input[type=text]:focus,select:focus{border-color:var(--brass);}
+  .chance-slider{
+    -webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:999px;
+    margin:4px 0 10px;cursor:pointer;
+    background:linear-gradient(90deg,var(--brass),var(--pink));
+  }
+  .chance-slider::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;
+    background:var(--paper);border:3px solid var(--pink);cursor:pointer;
+    box-shadow:0 2px 6px rgba(0,0,0,0.4);
+  }
+  .chance-slider::-moz-range-thumb{
+    width:18px;height:18px;border-radius:50%;background:var(--paper);
+    border:3px solid var(--pink);cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.4);
+  }
+  .chance-slider::-moz-range-track{background:transparent;}
+  .chance-slider:focus-visible{outline:2px solid var(--pink);outline-offset:3px;}
+  .quick{display:flex;gap:6px;margin-top:8px;}
+  .quick button{
+    flex:1;background:rgba(255,255,255,0.03);border:1px solid var(--line);color:var(--muted);
+    padding:6px 4px;border-radius:6px;cursor:pointer;font-size:0.72rem;font-weight:600;
+  }
+  .quick button:hover{color:var(--paper);border-color:var(--line-strong);}
+  .pending-bet-panel{
+    background:rgba(227,169,74,0.08);border:1px solid rgba(227,169,74,0.35);
+    border-radius:8px;padding:12px 14px;margin-top:14px;
+  }
+  .pending-bet-panel .pb-title{
+    font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:0.05em;
+    text-transform:uppercase;font-size:0.82rem;color:var(--brass);margin-bottom:4px;
+  }
+  .pending-bet-panel .pb-status{font-size:0.78rem;color:var(--muted);line-height:1.5;}
+  input:disabled{opacity:0.45;cursor:not-allowed;}
+  .bet-max-hint{font-size:0.7rem;color:var(--muted-2);margin-top:6px;}
+  .cap{
+    cursor:pointer;text-decoration:underline;text-underline-offset:2px;
+    text-decoration-style:dotted;
+  }
+  .bet-max-hint .cap{color:var(--brass);}
+  .bet-max-hint .cap:hover{color:var(--paper);}
+  .error-note .cap{color:var(--loss);font-weight:700;}
+  .error-note .cap:hover{color:var(--paper);}
+
+  /* preview box */
+  .preview{
+    display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0;
+    background:rgba(0,0,0,0.18);border:1px solid var(--line);border-radius:8px;padding:12px 14px;
+  }
+  .preview .cell .k{font-size:0.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;}
+  .preview .cell .v{font-family:'JetBrains Mono',monospace;font-size:1rem;color:var(--paper);margin-top:2px;}
+  .preview .cell .v.brass{color:var(--brass);}
+  .preview .cell .v.win{color:var(--win);}
+  .preview .max-win-cell{
+    grid-column:1/-1;background:rgba(127,217,168,0.05);border:1px solid rgba(127,217,168,0.12);
+    border-radius:6px;padding:10px 12px;margin-top:2px;
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .preview .max-win-cell .k{font-size:0.68rem;color:var(--win);text-transform:uppercase;letter-spacing:0.08em;}
+  .preview .max-win-cell .v{font-family:'JetBrains Mono',monospace;font-size:1.05rem;font-weight:700;color:var(--win);}
+  .preview .max-win-cell .sub{font-size:0.7rem;color:var(--muted-2);margin-top:2px;}
+
+  .primary-btn{
+    width:100%;padding:14px;border:none;border-radius:8px;cursor:pointer;
+    background:linear-gradient(180deg,var(--pink),#c72c7d);color:#fff;
+    font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;
+    font-size:0.95rem;box-shadow:0 8px 22px rgba(255,63,158,0.22);
+  }
+  .primary-btn:disabled{opacity:0.45;cursor:not-allowed;box-shadow:none;}
+  .error-note{color:var(--loss);font-size:0.76rem;margin-top:6px;min-height:16px;}
+
+  /* ── stats strip ── */
+  .stats-strip{
+    grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:0;padding:16px 6px;
+  }
+  @media(max-width:900px){.stats-strip{grid-template-columns:repeat(3,1fr);}}
+  @media(max-width:520px){.stats-strip{grid-template-columns:repeat(2,1fr);}}
+  .stat{text-align:center;padding:6px 10px;border-right:1px solid var(--line);}
+  .stat:last-child{border-right:none;}
+  .stat .k{font-size:0.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;}
+  .stat .v{font-family:'JetBrains Mono',monospace;font-size:1.05rem;color:var(--brass);margin-top:4px;}
+
+  /* ── history ── */
+  .history{grid-column:1/-1;padding:18px 20px 22px;}
+  .history .tabs{margin-bottom:12px;}
+  table{width:100%;border-collapse:collapse;font-size:0.82rem;}
+  thead th{text-align:left;color:var(--muted);font-weight:600;text-transform:uppercase;font-size:0.68rem;letter-spacing:0.06em;padding:8px 10px;border-bottom:1px solid var(--line-strong);}
+  tbody td{padding:9px 10px;border-bottom:1px solid var(--line);font-family:'JetBrains Mono',monospace;}
+  tbody tr:hover{background:rgba(255,255,255,0.02);}
+  .pill{padding:2px 8px;border-radius:999px;font-size:0.72rem;font-weight:700;}
+  .pill.win{background:rgba(127,217,168,0.15);color:var(--win);}
+  .pill.lose{background:rgba(217,105,95,0.15);color:var(--loss);}
+  .profit-pos{color:var(--win);}
+  .profit-neg{color:var(--loss);}
+  .empty-row td{text-align:center;color:var(--muted-2);padding:22px;}
+  #historyBody tr.row-in{animation:rowSlideIn 0.4s ease-out;}
+  #historyBody tr.row-in td{animation:rowFlash 1.1s ease-out;}
+  @keyframes rowSlideIn{
+    from{transform:translateY(-8px);opacity:0;}
+    to{transform:none;opacity:1;}
+  }
+  @keyframes rowFlash{
+    0%{background-color:rgba(227,169,74,0.16);}
+    100%{background-color:transparent;}
+  }
+  @media(prefers-reduced-motion:reduce){
+    #historyBody tr.row-in, #historyBody tr.row-in td{animation:none;}
+  }
+
+  /* ── fair play section ── */
+  .fair-play{
+    grid-column:1/-1;padding:22px 24px;margin-top:4px;
+    border:1px solid var(--line);border-radius:var(--radius);
+    background:linear-gradient(180deg,rgba(21,35,33,0.6),rgba(15,25,24,0.6));
+  }
+  .fair-play h3{font-size:0.85rem;letter-spacing:0.14em;color:var(--muted);margin-bottom:14px;}
+  .fair-play-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;}
+  @media(max-width:720px){.fair-play-grid{grid-template-columns:1fr;}}
+  .fp-card{background:rgba(0,0,0,0.2);border:1px solid var(--line);border-radius:8px;padding:14px 16px;}
+  .fp-card .fp-icon{font-size:1.3rem;margin-bottom:8px;}
+  .fp-card .fp-title{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:0.9rem;color:var(--paper);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;}
+  .fp-card .fp-body{font-size:0.76rem;color:var(--muted);line-height:1.6;}
+  .fp-card .fp-body em{color:var(--brass);font-style:normal;}
+
+  /* ── footer ── */
+  footer{text-align:center;color:var(--muted-2);font-size:0.76rem;padding-top:26px;}
+  footer a{color:var(--muted);}
+  footer .addr{font-family:'JetBrains Mono',monospace;}
+
+  /* ── toasts ── */
+  .toast-container{position:fixed;bottom:18px;right:18px;display:flex;flex-direction:column;gap:8px;z-index:200;max-width:340px;}
+  .toast{
+    background:var(--panel);border:1px solid var(--line-strong);border-left:3px solid var(--brass);
+    padding:12px 14px;border-radius:6px;font-size:0.82rem;box-shadow:var(--shadow);animation:slideIn 0.25s ease;
+  }
+  .toast.error{border-left-color:var(--loss);}
+  .toast.success{border-left-color:var(--win);}
+  @keyframes slideIn{from{transform:translateX(20px);opacity:0;}to{transform:none;opacity:1;}}
+  @media(prefers-reduced-motion:reduce){.toast{animation:none;}.odo-digit{transition:none;}}
+</style>
+</head>
+<body>
+<div id="cursorGlow" aria-hidden="true"></div>
+<div class="wrap">
+
+<!-- ═════════════════════════════════════════════════════ HEADER -->
+<header class="top">
+  <div class="brand">
+    <div class="mark"><img src="otr.gif" alt="OnlyRolls" /></div>
+    <div class="brand-text">
+      <h1>𝒪𝓃𝓁𝓎𝑅𝑜𝓁𝓁𝓈</h1>
+      <div class="tag">Beautifully Simple · Provably fair · 2% pool fee · OTR · PulseChain</div>
+    </div>
+    <div class="mark"><img src="otr.gif" alt="OnlyRolls" /></div>
+  </div>
+  <div class="header-right">
+    <a id="buyOtrBtn" class="buy-btn" href="https://ipfs.app.pulsex.com/?inputCurrency=PLS&outputCurrency=0xf28956aad0eec5cd30492d29f6e98e2011c25203" target="_blank" rel="noopener">Buy OTR</a>
+    <a id="bridgeBtn" class="buy-btn" href="https://libertyswap.finance/" target="_blank" rel="noopener">Bridge to PulseChain</a>
+    <div id="claimChip" class="claim-chip" style="display:none;">
+      <span style="font-size:0.78rem;color:var(--muted);">Pending:</span>
+      <span class="mono" id="pendingAmount" style="color:var(--win);font-weight:700;"></span>
+      <button class="claim-btn" id="claimBtn">Claim OTR</button>
+    </div>
+    <button id="connectWalletBtn">Connect Wallet</button>
+    <div class="net-badge"><span class="net-dot" id="netDot"><svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+      <rect x="2" y="2" width="20" height="20" rx="5" fill="currentColor"/>
+      <circle cx="7" cy="7" r="2.1" fill="var(--bg)"/>
+      <circle cx="17" cy="7" r="2.1" fill="var(--bg)"/>
+      <circle cx="12" cy="12" r="2.1" fill="var(--bg)"/>
+      <circle cx="7" cy="17" r="2.1" fill="var(--bg)"/>
+      <circle cx="17" cy="17" r="2.1" fill="var(--bg)"/>
+    </svg></span><span id="netLabel">Not connected</span></div>
+    <div id="walletConnectedBar" class="wallet-connected-bar" style="display:none;">
+      <span class="wallet-addr" id="walletAddr"></span>
+      <span class="wallet-otr" id="headerOtrBal">—</span>
+      <span style="color:var(--muted-2);font-size:0.78rem;">OTR</span>
+      <button class="disconnect-btn" id="disconnectBtn">✕</button>
+    </div>
+  </div>
+</header>
+
+
+<div class="token-strip">
+  <span class="k">OTR Token Contract</span>
+  <span class="mono v" id="topOtrAddr" data-full="0xf28956aad0eec5cd30492d29f6e98e2011c25203">0xf28956aad0eec5cd30492d29f6e98e2011c25203</span>
+  <button class="copy-btn" id="copyOtrAddrBtn" title="Copy address">Copy</button>
+  <a href="https://scan.pulsechain.com/address/0xf28956aad0eec5cd30492d29f6e98e2011c25203" target="_blank" rel="noopener">Explorer ↗</a>
+</div>
+
+<main class="console">
+
+  <!-- ═══ DIAL COLUMN -->
+  <section class="panel dial-column">
+    <div class="rivets"><span></span><span></span><span></span><span></span></div>
+    <div class="gauge-wrap">
+      <svg viewBox="0 0 300 170" width="100%">
+        <path d="M 20 150 A 130 130 0 0 1 280 150" fill="none" stroke="rgba(232,222,197,0.1)" stroke-width="14" stroke-linecap="round"/>
+        <path id="gaugeArc" d="M 20 150 A 130 130 0 0 1 280 150" fill="none" stroke="url(#gaugeGrad)" stroke-width="14" stroke-linecap="round" stroke-dasharray="408" stroke-dashoffset="204"/>
+        <defs>
+          <linearGradient id="gaugeGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#e3a94a"/>
+            <stop offset="100%" stop-color="#ff3f9e"/>
+          </linearGradient>
+        </defs>
+        <line id="needle" x1="150" y1="150" x2="150" y2="42" stroke="#ece4d3" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="150" cy="150" r="7" fill="#ece4d3"/>
+      </svg>
+      <div class="gauge-label">Roll under to win</div>
+      <div class="gauge-readout"><span class="num mono" id="gaugeReadout">50.00</span></div>
+    </div>
+    <div class="odometer" id="odometer"></div>
+    <div class="result-banner pending" id="resultBanner">Place a bet to roll</div>
+    <div class="tx-loader" id="txLoader" aria-hidden="true"><span class="ring"></span></div>
+    <div class="status-line" id="statusLine"></div>
+  </section>
+
+  <!-- ═══ CONTROLS COLUMN -->
+  <section class="panel controls-column">
+    <!-- OTR balance bar — always visible once connected -->
+    <div class="otr-balance-bar" id="otrBalanceBar">
+      <div>
+        <div class="label">Your OTR Balance</div>
+        <div class="amount" id="panelOtrBal" style="font-size:1.25rem;">—</div>
+      </div>
+      <div class="no-deposit-note" id="noDepositNote">⚡ Bet directly from your wallet</div>
+    </div>
+
+    <div class="controls-inner">
+
+      <!-- MANUAL MODE -->
+      <div id="manualPanel">
+        <div class="field">
+          <label>Bet amount <span class="hint" id="tokenSymLabel">OTR</span></label>
+          <input type="number" id="betAmount" value="10" min="0" step="any" />
+          <div class="quick">
+            <button data-op="half">½</button>
+            <button data-op="double">2×</button>
+            <button data-op="max">Max</button>
+          </div>
+          <div class="bet-max-hint" id="betMaxHint">Max bet at this chance: —</div>
+        </div>
+        <div class="pair-row">
+          <div class="field">
+            <label>Roll under to win <span class="hint">1.00–95.00</span></label>
+            <input type="number" id="winChance" value="50" min="1" max="95" step="0.01" />
+          </div>
+          <div class="field">
+            <label>Multiplier <span class="hint">← linked</span></label>
+            <input type="number" id="multiplier" value="1.9800" min="0" step="any" />
+          </div>
+        </div>
+        <input type="range" id="winChanceSlider" class="chance-slider" min="1" max="95" step="0.01" value="50" />
+        <div class="quick">
+          <button data-chance="2">2% win</button>
+          <button data-chance="10">10% win</button>
+          <button data-chance="50">50% win</button>
+          <button data-chance="90">90% win</button>
+        </div>
+
+        <div class="preview">
+          <div class="cell"><div class="k">Multiplier</div><div class="v brass" id="pvMult">1.9800×</div></div>
+          <div class="cell"><div class="k">Payout on win</div><div class="v" id="pvPayout">—</div></div>
+          <div class="cell"><div class="k">Profit on win</div><div class="v" id="pvProfit">—</div></div>
+          <div class="cell"><div class="k">Roll under to win</div><div class="v brass" id="pvChance">50.00</div></div>
+          <!-- Total payout — bet amount + profit, live as bet amount is typed -->
+          <div class="max-win-cell">
+            <div>
+              <div class="k">Total payout if you win</div>
+              <div class="sub" id="pvMaxBetSub">— OTR max bet</div>
+            </div>
+            <div class="v win" id="pvMaxWin">—</div>
+          </div>
+        </div>
+
+        <button class="primary-btn" id="actionBtn">Connect Wallet</button>
+        <div class="error-note" id="manualError"></div>
+        <div class="pending-bet-panel" id="pendingBetPanel" style="display:none;">
+          <div class="pb-title">⚠ You have a pending bet</div>
+          <div class="pb-status" id="pbStatus">—</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ STATS STRIP -->
+  <section class="panel stats-strip">
+    <div class="stat"><div class="k">Pool Bankroll</div><div class="v" id="statBankroll">—</div></div>
+    <div class="stat"><div class="k">Roll under range</div><div class="v" id="statChanceRange">—</div></div>
+    <div class="stat"><div class="k">Total bets</div><div class="v" id="statTotalBets">—</div></div>
+    <div class="stat"><div class="k">Status</div><div class="v" id="statPaused">—</div></div>
+  </section>
+
+  <!-- ═══ HISTORY -->
+  <section class="panel history">
+    <div class="tabs">
+      <button class="tab-btn active" data-hist="mine">Your Bets</button>
+      <button class="tab-btn" data-hist="feed">Live Feed</button>
+    </div>
+    <table>
+      <thead><tr><th>#</th><th>Roll</th><th>Target</th><th>Bet (OTR)</th><th>Payout (OTR)</th><th>Profit (OTR)</th><th>Result</th><th>Tx</th></tr></thead>
+      <tbody id="historyBody">
+        <tr class="empty-row"><td colspan="8">Connect your wallet to see your bet history.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ═══ FAIR PLAY SECTION -->
+  <div class="fair-play">
+    <h3>🛡 Fair Play: How Our Limits Protect Everyone</h3>
+    <div class="fair-play-grid">
+      <div class="fp-card">
+        <div class="fp-icon">⏱</div>
+        <div class="fp-title">One Bet Per Wallet at a Time</div>
+        <div class="fp-body">
+          Each wallet can only have <em>one unresolved bet open at once</em>. Your roll
+          usually resolves in about two blocks (roughly 20 seconds), and then you're free
+          to jump right back in. Human players never feel any friction, even clicking as
+          fast as their wallet can confirm. Bots trying to flood the contract with dozens
+          of bets at once get blocked outright.
+        </div>
+      </div>
+      <div class="fp-card">
+        <div class="fp-icon">🔒</div>
+        <div class="fp-title">Pool Payout Cap</div>
+        <div class="fp-body">
+          No single bet can ever pay out more than <em>the pool's current tiered cap</em>,
+          a flat ceiling that grows with the bankroll instead of chasing a shifting
+          percentage. That keeps one lucky roll (or a scripted attack) from draining the
+          pool, and it makes trying to manipulate a block pointless: whatever you'd stand
+          to gain is smaller than the validator reward you'd be giving up.
+        </div>
+      </div>
+      <div class="fp-card">
+        <div class="fp-icon">✅</div>
+        <div class="fp-title">Bet Directly, No Deposits</div>
+        <div class="fp-body">
+          You never send OTR to a holding account. Each bet pulls <em>exactly your bet
+          amount straight from your wallet</em> the moment you roll, and winnings come
+          right back to you. You stay in control of your OTR the whole time. The only
+          setup is a one-time wallet approval: no registration, no account, no minimum
+          balance.
+        </div>
+      </div>
+      <div class="fp-card">
+        <div class="fp-icon">📊</div>
+        <div class="fp-title">What the 2% Pool Fee Actually Does</div>
+        <div class="fp-body">
+          A 2% fee only shows up in <em>the multiplier</em>, it shaves a small amount off
+          your payout math, nothing else. Your roll odds are computed the exact same way
+          every time and are never touched or adjusted based on the fee. Unlike a typical
+          house edge, this fee stays in the pool rather than being taken out: it directly
+          funds bankroll growth over time, and a bigger pool is what raises the max bet
+          and max payout caps for everyone. It's a contribution to the pool, not a cut
+          against you.
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<footer style="margin-top:24px;">
+  Token: <span class="addr">OTR · 0xf28956aad0eec5cd30492d29f6e98e2011c25203</span>
+  &nbsp;·&nbsp;
+  Game contract: <span class="addr" id="footerContract">—</span>
+  &nbsp;·&nbsp;
+  <a id="footerExplorer" href="#" target="_blank" rel="noopener">Explorer</a>
+  &nbsp;·&nbsp;
+  <a href="#" id="footerVerify">Verify a roll</a>
+  <div style="margin-top:8px;">Games of chance carry real risk of loss. Only bet what you can afford to lose.</div>
+</footer>
+</div><!-- /.wrap -->
+
+<!-- ═════════════════════════════════════════════════════ WALLET MODAL -->
+<div class="modal-overlay" id="walletModal" role="dialog" aria-modal="true" aria-label="Connect wallet">
+  <div class="modal">
+    <h2>Connect Wallet</h2>
+    <p class="modal-sub">
+      Bets are placed directly from your wallet — <strong>no deposits required</strong>.
+      Approve OTR once, then roll any time.
+    </p>
+    <button class="wallet-option" id="connectMetaMask">
+      <div class="wallet-icon">🦊</div>
+      <div>
+        <div class="wallet-name">MetaMask</div>
+        <div class="wallet-hint">Browser extension</div>
+      </div>
+      <span class="wallet-badge not-found" id="mmBadge">—</span>
+    </button>
+    <button class="wallet-option" id="connectRabby">
+      <div class="wallet-icon">🐰</div>
+      <div>
+        <div class="wallet-name">Rabby Wallet</div>
+        <div class="wallet-hint">rabby.io · browser extension</div>
+      </div>
+      <span class="wallet-badge not-found" id="rabbyBadge">—</span>
+    </button>
+    <button class="wallet-option" id="connectInternetMoney">
+      <div class="wallet-icon">💸</div>
+      <div>
+        <div class="wallet-name">Internet Money</div>
+        <div class="wallet-hint">internetmoney.io · browser extension</div>
+      </div>
+      <span class="wallet-badge not-found" id="imBadge">—</span>
+    </button>
+    <button class="modal-close" id="modalClose">Cancel</button>
+  </div>
+</div>
+
+<div class="toast-container" id="toasts"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+<script>
+/* =========================================================================
+   CONFIG — fill in your deployed addresses before going live
+   ========================================================================= */
+const CONFIG = {
+  CHAIN_ID:       943,
+  CHAIN_ID_HEX:  '0x3AF',
+  CHAIN_NAME:    'PulseChain Testnet v4',
+  RPC_URL:       'https://rpc.v4.testnet.pulsechain.com',
+  EXPLORER_URL:  'https://scan.v4.testnet.pulsechain.com',
+  NATIVE_SYMBOL: 'tPLS',
+  CONTRACT_ADDRESS: '0xD99107e49bB88566d5088fFd874D4ADd0aC43E74', // OnlyRolls game contract (testnet)
+  TOKEN_ADDRESS:    '0x661386753568D8F014D8040479Dc9e258eB93aC6', // tOTR (testnet)
+  POLL_MS:          1000, // block-detection poll interval — PulseChain blocks land ~every 10s, so this reacts quickly without hammering the RPC
+  FEED_BLOCK_LOOKBACK: 20000,
+};
+
+/* =========================================================================
+   ABIs
+   ========================================================================= */
+const DICE_ABI = [
+  "function placeBet(uint32 winChanceBps, uint256 amount, uint128 clientSeed) returns (uint256)",
+  "function resolveBet(uint256 betId)",
+  "function previewRoll(uint256 betId) view returns (uint16 roll, bool valid)",
+  "function activeBetId(address player) view returns (uint256 betId, bool hasActive)",
+  "function bets(uint256) view returns (address player, uint128 amount, uint128 payout, uint32 winChanceBps, uint64 commitBlock1, uint64 commitBlock2, uint128 clientSeed, bool resolved, bool won, uint16 roll)",
+  "function nextBetId() view returns (uint256)",
+  "function minBet() view returns (uint256)",
+  "function maxBet() view returns (uint256)",
+  "function houseEdgeBps() view returns (uint32)",
+  "function minWinChanceBps() view returns (uint32)",
+  "function maxWinChanceBps() view returns (uint32)",
+  "function currentPayoutCap() view returns (uint256)",
+  "function freeBankroll() view returns (uint256)",
+  "function totalPotentialPayout() view returns (uint256)",
+  "function pendingWithdrawals(address) view returns (uint256)",
+  "function withdraw()",
+  "function token() view returns (address)",
+  "function paused() view returns (bool)",
+  "event BetPlaced(uint256 indexed betId, address indexed player, uint256 amount, uint32 winChanceBps, uint256 payout, uint64 commitBlock1, uint64 commitBlock2, uint128 clientSeed)",
+  "event BetResolved(uint256 indexed betId, address indexed player, bool won, uint16 roll, uint256 paidOut, bool paidDirectly)",
+  "event BetRefunded(uint256 indexed betId, address indexed player, uint256 amount, bool paidDirectly)",
+  "event BankrollDeposited(address indexed from, uint256 amount)",
+  // Custom errors — declaring these lets ethers decode revert reasons into
+  // readable names (err.revert.name / err.reason) instead of raw hex data.
+  "error BetAlreadyActive()",
+  "error CooldownActive()",
+  "error BlockBetCapReached()",
+  "error BetTooSmall()",
+  "error BetTooLarge()",
+  "error WinChanceOutOfRange()",
+  "error ExceedsMaxExposure()",
+  "error PoolBelowFloor()",
+  "error PayoutNotProfitable()",
+  "error ContractBetsDisabled()",
+  "error NoSuchBet()",
+  "error AlreadyResolved()",
+  "error NotResolvableYet()",
+  "error EdgeTooHigh()",
+  "error ChanceBoundsInvalid()",
+  "error InsufficientFreeBankroll()",
+  "error AccountingInvariantViolated()",
+  "error NothingToWithdraw()",
+  "error WithdrawalFinal()",
+  "error StillTimelocked()",
+  "error ZeroAddress()",
+  "error ZeroAmount()",
+  "error RenounceDisabled()",
+  "error BadPayoutTiers()"
+];
+const ERC20_ABI = [
+  "function balanceOf(address) view returns (uint256)",
+  "function allowance(address,address) view returns (uint256)",
+  "function approve(address,uint256) returns (bool)",
+  "function decimals() view returns (uint8)",
+  "function symbol() view returns (string)"
+];
+
+/* =========================================================================
+   STATE
+   ========================================================================= */
+const BPS_DENOM = 10000n;
+let provider, signer, userAddress;
+let diceContract, diceContractRO, tokenContract;
+let tokenDecimals = 18, tokenSymbol = 'OTR';
+let currentHistTab = 'mine';
+let myHistory = [];
+let liveConfig = { minBet:0n, maxBet:0n, houseEdgeBps:100, minChanceBps:100, maxChanceBps:9500, currentPayoutCap:0n, freeBankroll:0n };
+
+// A bet the connected wallet already has open (from this session or a prior
+// one) that still needs resolveBet called — see checkPendingBet().
+let pendingBet = null;
+
+const ERROR_MESSAGES = {
+  BetAlreadyActive: 'You already have a bet in progress — resolve it below before placing a new one.',
+  CooldownActive: 'Please wait one more block before betting again.',
+  BlockBetCapReached: 'Too many bets this block — try again in a moment.',
+  BetTooSmall: 'Bet amount is below the minimum.',
+  BetTooLarge: 'Bet amount is above the maximum.',
+  WinChanceOutOfRange: 'Roll-under target is outside the allowed range.',
+  ExceedsMaxExposure: "Payout would exceed the pool's max payout cap — lower your bet or win chance.",
+  PoolBelowFloor: 'The pool is below its safe floor and is not accepting new bets right now.',
+  PayoutNotProfitable: "These settings wouldn't be profitable to win — adjust win chance.",
+  ContractBetsDisabled: 'Bets from contract wallets are currently disabled.',
+  NoSuchBet: 'That bet no longer exists.',
+  AlreadyResolved: 'That bet has already been resolved.',
+  NotResolvableYet: "This bet can't be resolved yet — wait for the next block and try again.",
+};
+/// Turns a thrown ethers error into a readable message. Custom contract
+/// errors decode via one of a few possible ethers v6 shapes depending on
+/// call path, so check all of them before falling back to raw text.
+function friendlyError(err){
+  const name = err?.revert?.name || err?.errorName || err?.reason;
+  if (name && ERROR_MESSAGES[name]) return ERROR_MESSAGES[name];
+  return err?.shortMessage || err?.reason || err?.message || 'Transaction failed';
+}
+
+// EIP-6963 wallet registry: rdns → EIP1193 provider
+const detectedProviders = {};
+
+/* =========================================================================
+   EIP-6963 wallet detection — fires before any user interaction
+   ========================================================================= */
+window.addEventListener('eip6963:announceProvider', (event) => {
+  const { info, provider: prov } = event.detail;
+  detectedProviders[info.rdns] = prov;
+  refreshWalletBadges();
+});
+window.dispatchEvent(new Event('eip6963:requestProvider'));
+
+// Also pick up providers injected the old way
+setTimeout(refreshWalletBadges, 200);
+
+function refreshWalletBadges(){
+  const has = (rdns, legacyFlag) => {
+    if (detectedProviders[rdns]) return true;
+    if (window.ethereum){
+      if (legacyFlag && window.ethereum[legacyFlag]) return true;
+      // Check EIP-6963 providers array if available
+      if (window.ethereum.providers) return window.ethereum.providers.some(p => p[legacyFlag]);
+    }
+    return false;
+  };
+  setBadge('mmBadge',    has('io.metamask', 'isMetaMask'));
+  setBadge('rabbyBadge', has('io.rabby', 'isRabby'));
+  // Internet Money wallet — try known identifiers
+  const hasIM = detectedProviders['io.internetmoney'] ||
+                detectedProviders['com.internetmoney'] ||
+                (window.ethereum && window.ethereum.isInternetMoney) || false;
+  setBadge('imBadge', !!hasIM);
+}
+function setBadge(id, found){
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = found ? 'Ready' : 'Not found';
+  el.className = 'wallet-badge' + (found ? '' : ' not-found');
+}
+
+/* =========================================================================
+   WALLET MODAL
+   ========================================================================= */
+function openWalletModal(){
+  refreshWalletBadges();
+  document.getElementById('walletModal').classList.add('open');
+}
+function closeWalletModal(){
+  document.getElementById('walletModal').classList.remove('open');
+}
+document.getElementById('connectWalletBtn').addEventListener('click', openWalletModal);
+document.getElementById('modalClose').addEventListener('click', closeWalletModal);
+document.getElementById('walletModal').addEventListener('click', e => { if(e.target===e.currentTarget) closeWalletModal(); });
+
+document.getElementById('connectMetaMask').addEventListener('click', () => connectWith('io.metamask','isMetaMask'));
+document.getElementById('connectRabby').addEventListener('click', () => connectWith('io.rabby','isRabby'));
+document.getElementById('connectInternetMoney').addEventListener('click', () => connectWith('io.internetmoney','isInternetMoney','com.internetmoney'));
+
+async function connectWith(rdns, legacyFlag, altRdns){
+  closeWalletModal();
+  // Prefer EIP-6963 detected provider; fall back to legacy window.ethereum
+  let ethProvider = detectedProviders[rdns] || (altRdns && detectedProviders[altRdns]);
+  if (!ethProvider && window.ethereum){
+    if (window.ethereum.providers){
+      ethProvider = window.ethereum.providers.find(p => p[legacyFlag]) || window.ethereum;
+    } else {
+      ethProvider = window.ethereum;
+    }
+  }
+  if (!ethProvider){
+    const names = { 'io.metamask':'MetaMask', 'io.rabby':'Rabby', 'io.internetmoney':'Internet Money' };
+    const links = {
+      'io.metamask':      'https://metamask.io',
+      'io.rabby':         'https://rabby.io',
+      'io.internetmoney': 'https://internetmoney.io'
+    };
+    toast(`${names[rdns]||'Wallet'} not detected. <a href="${links[rdns]||'#'}" target="_blank" rel="noopener">Install it</a>`, 'error');
+    return;
+  }
+  await doConnect(ethProvider);
+}
+
+async function doConnect(ethProvider){
+  try {
+    await ethProvider.request({ method: 'eth_requestAccounts' });
+    provider = new ethers.BrowserProvider(ethProvider, { chainId: CONFIG.CHAIN_ID, name: CONFIG.CHAIN_NAME });
+    await ensureCorrectChain(ethProvider);
+    signer = await provider.getSigner();
+    userAddress = await signer.getAddress();
+
+    diceContract   = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, signer);
+    diceContractRO = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, provider);
+    tokenContract  = new ethers.Contract(CONFIG.TOKEN_ADDRESS, ERC20_ABI, signer);
+
+    try { tokenDecimals = Number(await tokenContract.decimals()); } catch(e){}
+    try { tokenSymbol   = await tokenContract.symbol(); } catch(e){}
+    document.getElementById('tokenSymLabel').textContent = tokenSymbol;
+
+    document.getElementById('connectWalletBtn').style.display = 'none';
+    document.getElementById('walletConnectedBar').style.display = 'flex';
+    document.getElementById('walletAddr').textContent = short(userAddress);
+    document.getElementById('actionBtn').textContent = 'Place Bet';
+
+    ethProvider.on('accountsChanged', () => window.location.reload());
+    ethProvider.on('chainChanged',    () => window.location.reload());
+
+    await refreshBalances();
+    await refreshConfig();
+    renderHistory();
+    await checkPendingBet();
+    setInterval(refreshBalances, 12000);
+    setInterval(refreshConfig,   20000);
+    setInterval(checkPendingBet, 15000);
+  } catch(err){
+    console.error(err);
+    toast(err.shortMessage || err.message || 'Connection failed', 'error');
+    document.getElementById('connectWalletBtn').style.display = '';
+  }
+}
+
+async function ensureCorrectChain(ethProvider){
+  const net = await provider.getNetwork();
+  if (Number(net.chainId) === CONFIG.CHAIN_ID){ setNetBadge(true); return; }
+  try {
+    await ethProvider.request({ method:'wallet_switchEthereumChain', params:[{chainId:CONFIG.CHAIN_ID_HEX}] });
+  } catch(err){
+    if (err.code === 4902){
+      await ethProvider.request({ method:'wallet_addEthereumChain', params:[{
+        chainId: CONFIG.CHAIN_ID_HEX, chainName: CONFIG.CHAIN_NAME,
+        nativeCurrency:{ name:CONFIG.NATIVE_SYMBOL, symbol:CONFIG.NATIVE_SYMBOL, decimals:18 },
+        rpcUrls:[CONFIG.RPC_URL], blockExplorerUrls:[CONFIG.EXPLORER_URL]
+      }]});
+    } else { throw err; }
+  }
+  provider = new ethers.BrowserProvider(ethProvider, { chainId: CONFIG.CHAIN_ID, name: CONFIG.CHAIN_NAME });
+  setNetBadge(true);
+}
+
+function setNetBadge(ok){
+  document.getElementById('netDot').className = 'net-dot ' + (ok ? 'ok' : 'bad');
+  document.getElementById('netLabel').textContent = ok ? CONFIG.CHAIN_NAME : 'Wrong network';
+}
+
+document.getElementById('disconnectBtn').addEventListener('click', () => window.location.reload());
+
+/* =========================================================================
+   BALANCES
+   ========================================================================= */
+async function refreshBalances(){
+  if (!userAddress) return;
+  try {
+    const [bal, pending] = await Promise.all([
+      tokenContract.balanceOf(userAddress),
+      diceContract.pendingWithdrawals(userAddress)
+    ]);
+    const fmtBal = fmt(formatAmount(bal), 2);
+    document.getElementById('headerOtrBal').textContent = fmtBal;
+    document.getElementById('panelOtrBal').textContent  = fmtBal + ' ' + tokenSymbol;
+
+    // Pending pull-payment claim chip
+    if (pending > 0n){
+      document.getElementById('pendingAmount').textContent = fmt(formatAmount(pending), 2) + ' ' + tokenSymbol;
+      document.getElementById('claimChip').style.display = 'flex';
+    } else {
+      document.getElementById('claimChip').style.display = 'none';
+    }
+  } catch(e){ console.warn('refreshBalances:', e); }
+}
+
+document.getElementById('claimBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('claimBtn');
+  btn.disabled = true;
+  try {
+    const tx = await diceContract.withdraw();
+    toast('Claim submitted…');
+    await tx.wait();
+    toast('OTR claimed to your wallet.', 'success');
+    await refreshBalances();
+  } catch(e){ toast(e.shortMessage || e.message || 'Claim failed', 'error'); }
+  finally { btn.disabled = false; }
+});
+
+/* =========================================================================
+   CONTRACT CONFIG / STATS
+   ========================================================================= */
+function getFallbackProvider(){
+  // ethers.js v6 treats PulseChain (chain 369) as "unknown" and tries ENS resolution
+  // during provider init, which throws UNSUPPORTED_OPERATION. staticNetwork tells
+  // ethers exactly what chain this is so it never attempts auto-detect or ENS.
+  const net = new ethers.Network(CONFIG.CHAIN_NAME, CONFIG.CHAIN_ID);
+  return new ethers.JsonRpcProvider(CONFIG.RPC_URL, net, { staticNetwork: net });
+}
+
+async function refreshConfig(){
+  const ro = diceContractRO || new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, getFallbackProvider());
+  try {
+    const [minBetV, maxBetV, edge, minChance, maxChance, payoutCap, freeBR, nextId, paused] = await Promise.all([
+      ro.minBet(), ro.maxBet(), ro.houseEdgeBps(), ro.minWinChanceBps(), ro.maxWinChanceBps(),
+      ro.currentPayoutCap(), ro.freeBankroll(), ro.nextBetId(), ro.paused()
+    ]);
+    liveConfig = {
+      minBet: minBetV, maxBet: maxBetV,
+      houseEdgeBps: Number(edge),
+      minChanceBps: Number(minChance), maxChanceBps: Number(maxChance),
+      currentPayoutCap: payoutCap,
+      freeBankroll: freeBR
+    };
+
+    // Bankroll (full balance)
+    let bankrollBal = 0n;
+    try {
+      const t = tokenContract || new ethers.Contract(CONFIG.TOKEN_ADDRESS, ERC20_ABI, getFallbackProvider());
+      bankrollBal = await t.balanceOf(CONFIG.CONTRACT_ADDRESS);
+    } catch(e){}
+
+    document.getElementById('statBankroll').textContent =
+      fmt(ethers.formatUnits(bankrollBal, tokenDecimals), 0) + ' OTR';
+    document.getElementById('statChanceRange').textContent =
+      (liveConfig.minChanceBps/100).toFixed(2) + ' – ' + (liveConfig.maxChanceBps/100).toFixed(2);
+    document.getElementById('statTotalBets').textContent = nextId.toString();
+    document.getElementById('statPaused').innerHTML = paused ? '⏸ Paused' : `<span class="status-die"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+      <rect x="2" y="2" width="20" height="20" rx="5" fill="currentColor"/>
+      <circle cx="7" cy="7" r="2.1" fill="var(--bg)"/>
+      <circle cx="17" cy="7" r="2.1" fill="var(--bg)"/>
+      <circle cx="12" cy="12" r="2.1" fill="var(--bg)"/>
+      <circle cx="7" cy="17" r="2.1" fill="var(--bg)"/>
+      <circle cx="17" cy="17" r="2.1" fill="var(--bg)"/>
+    </svg></span>Live`;
+    document.getElementById('footerContract').textContent = short(CONFIG.CONTRACT_ADDRESS);
+    document.getElementById('footerExplorer').href = CONFIG.EXPLORER_URL + '/address/' + CONFIG.CONTRACT_ADDRESS;
+
+    onWinChanceInput();
+    updatePreview();
+  } catch(e){ console.warn('refreshConfig:', e); }
+}
+
+/* =========================================================================
+   MANUAL PREVIEW — win chance ↔ multiplier two-way link
+   + dynamic max win that updates with settings
+   ========================================================================= */
+let syncingRateFields = false;
+
+function multiplierFromChanceBps(chanceBps){
+  const edge = BigInt(liveConfig.houseEdgeBps || 100);
+  if (chanceBps <= 0n) return 0;
+  return Number(BPS_DENOM - edge) / Number(chanceBps);
+}
+function chanceBpsFromMultiplier(mult){
+  const edge = Number(liveConfig.houseEdgeBps || 100);
+  if (!mult || mult <= 0) return 0;
+  return Math.round((10000 - edge) / mult);
+}
+
+function onWinChanceInput(){
+  if (syncingRateFields) return;
+  syncingRateFields = true;
+  const pct = parseFloat(document.getElementById('winChance').value || '0');
+  const bps = Math.round(pct * 100);
+  const mult = multiplierFromChanceBps(BigInt(Math.max(0, bps)));
+  document.getElementById('multiplier').value = mult ? mult.toFixed(4) : '';
+  syncingRateFields = false;
+  updatePreview();
+}
+function onMultiplierInput(){
+  if (syncingRateFields) return;
+  syncingRateFields = true;
+  const mult = parseFloat(document.getElementById('multiplier').value || '0');
+  const bps = chanceBpsFromMultiplier(mult);
+  document.getElementById('winChance').value = bps ? (bps/100).toFixed(2) : '';
+  syncingRateFields = false;
+  updatePreview();
+}
+
+function computeMaxWin(chanceBps){
+  // Max payout the contract will accept at this win-chance setting:
+  //   1) flat tiered payout cap — a step function of free bankroll, read
+  //      directly from the contract (see currentPayoutCap() on PulseDice)
+  //   2) maxBet × multiplier
+  // Return [maxWinOTR (bigint), effectiveMaxBet (bigint), exposureCap (bigint)]
+  const edge = BigInt(liveConfig.houseEdgeBps || 100);
+  const exposureCap = liveConfig.currentPayoutCap;
+  if (chanceBps <= 0n || liveConfig.maxBet === 0n) return [0n, 0n, exposureCap];
+  const payoutFromMaxBet = (liveConfig.maxBet * (BPS_DENOM - edge)) / chanceBps;
+  const maxPayout = payoutFromMaxBet < exposureCap ? payoutFromMaxBet : exposureCap;
+  // Back-compute the max bet for this chance that would hit the payout cap
+  const effMaxBet = (maxPayout * chanceBps) / (BPS_DENOM - edge);
+  const finalMaxBet = effMaxBet < liveConfig.maxBet ? effMaxBet : liveConfig.maxBet;
+  return [maxPayout, finalMaxBet, exposureCap];
+}
+
+function updatePreview(){
+  const amountStr = document.getElementById('betAmount').value;
+  const chancePct = parseFloat(document.getElementById('winChance').value || '0');
+  setGauge(chancePct);
+  // Keep the slider in sync regardless of what changed the chance (typing,
+  // multiplier field, quick-% buttons, or the periodic config refresh) —
+  // updatePreview() is the one function all of those paths funnel through.
+  document.getElementById('winChanceSlider').value = chancePct;
+
+  const amount    = parseAmount(amountStr);
+  const chanceBps = BigInt(Math.round(chancePct * 100));
+  const errEl     = document.getElementById('manualError');
+  errEl.textContent = '';
+
+  document.getElementById('pvChance').textContent = chancePct ? chancePct.toFixed(2) : '—';
+
+  const [maxWin, effMaxBet, exposureCap] = computeMaxWin(chanceBps);
+  const mult = chanceBps > 0n ? multiplierFromChanceBps(chanceBps) : 0;
+  document.getElementById('pvMult').textContent = mult ? mult.toFixed(4) + '×' : '—';
+
+  const betMaxHint = document.getElementById('betMaxHint');
+  if (maxWin > 0n){
+    document.getElementById('pvMaxBetSub').textContent =
+      fmt(formatAmount(effMaxBet), 2) + ' OTR max bet at ' + chancePct.toFixed(2) + '% win chance';
+    betMaxHint.innerHTML =
+      `Max bet at this chance: <span class="cap" id="betMaxFill" data-raw="${effMaxBet.toString()}" title="Click to fill this amount">${fmt(formatAmount(effMaxBet),2)} OTR</span> ` +
+      `— every roll is capped at a max payout of ${fmt(formatAmount(exposureCap),0)} OTR, so bigger multipliers allow smaller bets.`;
+  } else {
+    document.getElementById('pvMaxBetSub').textContent = '—';
+    betMaxHint.textContent = 'Max bet at this chance: —';
+  }
+
+  if (chanceBps <= 0n || amount <= 0n){
+    document.getElementById('pvPayout').textContent = '—';
+    document.getElementById('pvProfit').textContent = '—';
+    // Nothing typed yet — show the theoretical ceiling instead of a live payout.
+    document.getElementById('pvMaxWin').textContent = maxWin > 0n ? fmt(formatAmount(maxWin), 2) + ' OTR' : '—';
+    return;
+  }
+  const edge   = BigInt(liveConfig.houseEdgeBps || 100);
+  const payout = (amount * (BPS_DENOM - edge)) / chanceBps; // = amount + profit
+  const profit = payout - amount;
+  document.getElementById('pvPayout').textContent = fmt(formatAmount(payout), 2) + ' OTR';
+  document.getElementById('pvProfit').textContent = fmt(formatAmount(profit), 2) + ' OTR';
+  // Live total payout (bet amount + profit) for the entered bet — tracks
+  // betAmount as it's typed, instead of sitting frozen at the tier ceiling.
+  document.getElementById('pvMaxWin').textContent = fmt(formatAmount(payout), 2) + ' OTR';
+
+  if (chanceBps < BigInt(liveConfig.minChanceBps) || chanceBps > BigInt(liveConfig.maxChanceBps)){
+    errEl.textContent = `Roll under to win must be ${(liveConfig.minChanceBps/100).toFixed(2)}–${(liveConfig.maxChanceBps/100).toFixed(2)}.`;
+  } else if (amount < liveConfig.minBet && liveConfig.minBet > 0n){
+    errEl.textContent = `Min bet: ${fmt(formatAmount(liveConfig.minBet),2)} OTR.`;
+  } else if (liveConfig.maxBet > 0n && amount > liveConfig.maxBet){
+    errEl.textContent = `Max bet: ${fmt(formatAmount(liveConfig.maxBet),2)} OTR.`;
+  } else if (maxWin > 0n && payout > maxWin){
+    errEl.innerHTML = `Payout would exceed the pool cap. Max bet at this chance: ` +
+      `<span class="cap" id="errMaxFill" data-raw="${effMaxBet.toString()}" title="Click to fill this amount">${fmt(formatAmount(effMaxBet),2)} OTR</span>.`;
+  }
+}
+
+/* =========================================================================
+   MANUAL BET CONTROL BINDINGS
+   ========================================================================= */
+document.querySelectorAll('#manualPanel .quick button[data-op]').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    const el = document.getElementById('betAmount');
+    const v  = parseFloat(el.value || '0');
+    const chanceBps = BigInt(Math.round(parseFloat(document.getElementById('winChance').value || '0') * 100));
+    const [, effMaxBet] = computeMaxWin(chanceBps);
+    if (b.dataset.op === 'half')   el.value = (v/2).toFixed(6);
+    if (b.dataset.op === 'double') el.value = (v*2).toFixed(6);
+    if (b.dataset.op === 'max')    el.value = formatAmount(effMaxBet > 0n ? effMaxBet : liveConfig.maxBet);
+    updatePreview();
+  });
+});
+document.querySelectorAll('#manualPanel .quick button[data-chance]').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    document.getElementById('winChance').value = b.dataset.chance;
+    onWinChanceInput();
+  });
+});
+document.getElementById('betAmount').addEventListener('input', updatePreview);
+document.getElementById('winChance').addEventListener('input', onWinChanceInput);
+document.getElementById('multiplier').addEventListener('input', onMultiplierInput);
+document.getElementById('winChanceSlider').addEventListener('input', () => {
+  document.getElementById('winChance').value = document.getElementById('winChanceSlider').value;
+  onWinChanceInput();
+});
+
+// Clickable max-bet figures (hint under Bet Amount, and the pool-cap error
+// message) — both are re-rendered on every updatePreview(), so bind via
+// delegation on their static containers instead.
+function bindMaxFillDelegate(containerId){
+  document.getElementById(containerId).addEventListener('click', (e) => {
+    const target = e.target.closest('.cap[data-raw]');
+    if (!target) return;
+    document.getElementById('betAmount').value = formatAmount(BigInt(target.dataset.raw));
+    updatePreview();
+  });
+}
+bindMaxFillDelegate('betMaxHint');
+bindMaxFillDelegate('manualError');
+
+/* =========================================================================
+   CORE BET FLOW — approve → placeBet → wait blocks → resolveBet
+   Players bet from their wallet; no deposit to a user account.
+   ========================================================================= */
+async function ensureAllowance(amount){
+  const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
+  if (allowance >= amount) return;
+  setStatus('Approving OTR spend (one-time)…');
+  const tx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, ethers.MaxUint256);
+  toast('Approval submitted…');
+  await tx.wait();
+  toast('OTR approved — you can now bet freely.', 'success');
+}
+
+function setStatus(text, linkHash){
+  const el = document.getElementById('statusLine');
+  if (linkHash){
+    el.innerHTML = `${text} — <a href="${CONFIG.EXPLORER_URL}/tx/${linkHash}" target="_blank" rel="noopener">view tx</a>`;
+  } else { el.textContent = text; }
+}
+function setResultBanner(text, cls){
+  const el = document.getElementById('resultBanner');
+  el.textContent = text;
+  el.className   = 'result-banner ' + (cls || 'pending');
+}
+function setTxLoading(on){
+  document.getElementById('txLoader').classList.toggle('active', !!on);
+}
+async function waitForBlock(target){
+  while(true){
+    const bn = await provider.getBlockNumber();
+    if (bn > target) return;
+    await new Promise(r => setTimeout(r, CONFIG.POLL_MS));
+  }
+}
+
+/// Shared tail end of the bet lifecycle: wait for the reveal block (if not
+/// already past it), call resolveBet, parse the outcome, and update every
+/// piece of UI that depends on it. Used both by a bet just placed in this
+/// same session, and by resolvePendingBet() resuming a bet from a dropped
+/// session — the two flows are identical from this point on.
+async function resolveAndFinish(betId, amount, winChanceBps, commitBlock2, placeTxHash){
+  const nowBlock = await provider.getBlockNumber();
+  if (nowBlock <= commitBlock2){
+    setStatus(`Bet #${betId} placed. Waiting for block ${commitBlock2}…`, placeTxHash);
+    await waitForBlock(commitBlock2);
+  }
+
+  const resolveTx   = await diceContract.resolveBet(betId);
+  setStatus('Resolving…', resolveTx.hash);
+  const resolveRcpt = await resolveTx.wait();
+
+  let won = false, roll = 0, paidOut = 0n, paidDirectly = true, refunded = false;
+  for (const log of resolveRcpt.logs){
+    try {
+      const p = diceContract.interface.parseLog(log);
+      if (p?.name === 'BetResolved'){
+        won = p.args.won; roll = Number(p.args.roll);
+        paidOut = p.args.paidOut; paidDirectly = p.args.paidDirectly; break;
+      }
+      if (p?.name === 'BetRefunded'){ refunded = true; break; }
+    } catch(e){}
+  }
+
+  if (refunded){
+    setResultBanner('Bet expired — refunded', 'lose');
+    setStatus('Bet expired — full stake refunded, no fee taken.', resolveTx.hash);
+    const rec = { refunded:true, betId:betId.toString(), roll:0, target:winChanceBps, amount, payout:0n, won:false,
+                  placeTx:placeTxHash, resolveTx:resolveTx.hash };
+    myHistory.unshift(rec);
+    renderHistory();
+    await refreshBalances();
+    await refreshConfig();
+    return rec;
+  }
+
+  animateOdometerRoll(roll, won);
+  if (won && !paidDirectly){
+    setResultBanner(`Win — ${fmt(formatAmount(paidOut),2)} OTR (claim above)`, 'win');
+    setStatus('Payout queued — click Claim OTR in the header.', resolveTx.hash);
+  } else {
+    setResultBanner(won ? `Win — ${fmt(formatAmount(paidOut),2)} OTR` : 'No win this roll', won ? 'win' : 'lose');
+    setStatus(won ? 'Payout sent to your wallet.' : 'Better luck next roll.', resolveTx.hash);
+  }
+  const rec = { betId:betId.toString(), roll, target:winChanceBps, amount, payout:paidOut, won,
+                placeTx:placeTxHash, resolveTx:resolveTx.hash };
+  myHistory.unshift(rec);
+  renderHistory();
+  await refreshBalances();
+  await refreshConfig();
+  return rec;
+}
+
+async function runOneBet(amount, winChanceBps){
+  await ensureAllowance(amount);
+  setResultBanner('Rolling…', 'pending');
+  setStatus('Placing bet…');
+  const clientSeed = BigInt('0x' +
+    Array.from(crypto.getRandomValues(new Uint8Array(8)))
+      .map(b => b.toString(16).padStart(2,'0')).join(''));
+
+  const placeTx     = await diceContract.placeBet(winChanceBps, amount, clientSeed);
+  setStatus('Submitted, confirming…', placeTx.hash);
+  const placeRcpt   = await placeTx.wait();
+
+  let betId, commitBlock2;
+  for (const log of placeRcpt.logs){
+    try {
+      const p = diceContract.interface.parseLog(log);
+      if (p?.name === 'BetPlaced'){ betId = p.args.betId; commitBlock2 = Number(p.args.commitBlock2); break; }
+    } catch(e){}
+  }
+  if (betId === undefined) throw new Error('BetPlaced event not found in receipt');
+
+  return resolveAndFinish(betId, amount, winChanceBps, commitBlock2, placeTx.hash);
+}
+
+/* =========================================================================
+   PENDING BET DETECTION & RESUME
+   A bet's two steps (placeBet, resolveBet) are two separate signatures. If a
+   player rejects/skips the second one, or closes the tab between them, the
+   bet sits open on-chain — the contract already guarantees it's eventually
+   resolvable or refundable (see PulseDice.sol resolveBet), but without this,
+   the player has no way to discover or finish it next time they show up; they'd
+   just see a confusing revert on their next bet attempt (BetAlreadyActive).
+   ========================================================================= */
+async function checkPendingBet(){
+  if (!userAddress) return;
+  const ro = diceContractRO || new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, getFallbackProvider());
+  try {
+    const [betId, hasActive] = await ro.activeBetId(userAddress);
+    if (!hasActive){
+      pendingBet = null;
+      await renderPendingBetUI();
+      return;
+    }
+    const bet = await ro.bets(betId);
+    pendingBet = {
+      betId,
+      amount: bet.amount,
+      winChanceBps: Number(bet.winChanceBps),
+      commitBlock1: Number(bet.commitBlock1),
+      commitBlock2: Number(bet.commitBlock2),
+    };
+    await renderPendingBetUI();
+  } catch(e){ console.warn('checkPendingBet:', e); }
+}
+
+async function renderPendingBetUI(){
+  const panel = document.getElementById('pendingBetPanel');
+  const btn   = document.getElementById('actionBtn');
+  const lockFields = ['betAmount','winChance','multiplier'];
+
+  if (!pendingBet){
+    panel.style.display = 'none';
+    lockFields.forEach(id => document.getElementById(id).disabled = false);
+    btn.dataset.mode = 'place';
+    if (userAddress) btn.textContent = 'Place Bet';
+    return;
+  }
+
+  panel.style.display = 'block';
+  lockFields.forEach(id => document.getElementById(id).disabled = true);
+  btn.dataset.mode = 'resolve';
+  btn.textContent = `Resolve Pending Bet #${pendingBet.betId}`;
+
+  const statusEl = document.getElementById('pbStatus');
+  try {
+    const nowBlock = await (provider || getFallbackProvider()).getBlockNumber();
+    if (nowBlock <= pendingBet.commitBlock2){
+      const blocksLeft = pendingBet.commitBlock2 - nowBlock;
+      statusEl.textContent =
+        `Bet #${pendingBet.betId} for ${fmt(formatAmount(pendingBet.amount),2)} OTR is still waiting on-chain — ` +
+        `~${blocksLeft} block${blocksLeft===1?'':'s'} until it can be resolved. Click above once it's ready.`;
+    } else if (nowBlock > pendingBet.commitBlock1 + 256){
+      statusEl.textContent =
+        `Bet #${pendingBet.betId}'s reveal window has passed — resolving now will refund your full ` +
+        `${fmt(formatAmount(pendingBet.amount),2)} OTR stake, no fee taken.`;
+    } else {
+      statusEl.textContent =
+        `Bet #${pendingBet.betId} for ${fmt(formatAmount(pendingBet.amount),2)} OTR is ready to resolve.`;
+    }
+  } catch(e){ statusEl.textContent = `Bet #${pendingBet.betId} needs to be resolved.`; }
+}
+
+async function resolvePendingBet(){
+  if (!pendingBet) return;
+  const { betId, amount, winChanceBps, commitBlock2 } = pendingBet;
+  const btn = document.getElementById('actionBtn');
+  btn.disabled = true;
+  setTxLoading(true);
+  setResultBanner('Rolling…', 'pending');
+  try {
+    await resolveAndFinish(betId, amount, winChanceBps, commitBlock2, null);
+  } catch(err){
+    console.error(err);
+    toast(friendlyError(err), 'error');
+  } finally {
+    btn.disabled = false;
+    setTxLoading(false);
+    await checkPendingBet(); // clears the panel if resolved; keeps it if the tx was rejected/failed
+  }
+}
+
+/* =========================================================================
+   MANUAL MODE ACTION
+   ========================================================================= */
+document.getElementById('actionBtn').addEventListener('click', async () => {
+  if (!userAddress){ openWalletModal(); return; }
+  const btn = document.getElementById('actionBtn');
+  if (btn.dataset.mode === 'resolve'){ await resolvePendingBet(); return; }
+  const amount    = parseAmount(document.getElementById('betAmount').value);
+  const chanceBps = Math.round(parseFloat(document.getElementById('winChance').value || '0') * 100);
+  if (amount <= 0n || chanceBps <= 0) return;
+  btn.disabled = true;
+  setTxLoading(true);
+  try { await runOneBet(amount, chanceBps); }
+  catch(err){ console.error(err); toast(friendlyError(err), 'error'); setResultBanner('Something went wrong','lose'); }
+  finally { btn.disabled = false; setTxLoading(false); await checkPendingBet(); }
+});
+
+/* =========================================================================
+   HISTORY
+   ========================================================================= */
+/// Green when net positive, red when net negative — shared by both tables.
+function profitCellHtml(profit){
+  if (profit === 0n) return `<td>0.00</td>`;
+  const cls  = profit > 0n ? 'profit-pos' : 'profit-neg';
+  const sign = profit > 0n ? '+' : '-';
+  const abs  = profit > 0n ? profit : -profit;
+  return `<td class="${cls}">${sign}${fmt(formatAmount(abs),2)}</td>`;
+}
+
+function renderHistory(){
+  if (currentHistTab !== 'mine') return;
+  const body = document.getElementById('historyBody');
+  if (!myHistory.length){
+    body.innerHTML = '<tr class="empty-row"><td colspan="8">No bets yet this session.</td></tr>'; return;
+  }
+  body.innerHTML = myHistory.slice(0,50).map(r => {
+    if (r.refunded) return `<tr><td>#${r.betId}</td><td colspan="3">${fmt(formatAmount(r.amount),2)}</td><td>0.00</td><td>0.00</td><td><span class="pill lose">REFUNDED</span></td><td><a href="${CONFIG.EXPLORER_URL}/tx/${r.resolveTx}" target="_blank" rel="noopener">tx</a></td></tr>`;
+    const profit = r.won ? (r.payout - r.amount) : -r.amount;
+    return `<tr>
+      <td>#${r.betId}</td>
+      <td>${(r.roll/100).toFixed(2)}</td>
+      <td>&lt; ${(r.target/100).toFixed(2)}</td>
+      <td>${fmt(formatAmount(r.amount),2)}</td>
+      <td>${r.won ? fmt(formatAmount(r.payout),2) : '0.00'}</td>
+      ${profitCellHtml(profit)}
+      <td><span class="pill ${r.won?'win':'lose'}">${r.won?'WIN':'LOSS'}</span></td>
+      <td><a href="${CONFIG.EXPLORER_URL}/tx/${r.resolveTx}" target="_blank" rel="noopener">tx</a></td>
+    </tr>`;
+  }).join('');
+}
+
+const MAX_FEED_ROWS = 50;
+
+/// The Live Feed only has BetResolved's on-event data (betId, player, won,
+/// roll, paidOut) — it doesn't include the original win-chance target or bet
+/// amount, so each row also fetches that bet's stored struct to fill in
+/// Target/Bet correctly instead of misusing those columns for other data.
+/// The leftmost column shows the redacted player address (short(player))
+/// rather than the bet ID — order in the list is what conveys "most recent",
+/// not a number, so nothing depends on the ID being visible.
+async function feedRowHtml(ro, player, betId, won, roll, paidOut, txHash){
+  let targetCell = '—', amountCell = '—', profitCell = '<td>—</td>';
+  try {
+    const bet = await ro.bets(betId);
+    targetCell = '&lt; ' + (Number(bet.winChanceBps)/100).toFixed(2);
+    amountCell = fmt(ethers.formatUnits(bet.amount, tokenDecimals), 2);
+    const profit = won ? (paidOut - bet.amount) : -bet.amount;
+    profitCell = profitCellHtml(profit);
+  } catch(e){}
+  return `<tr>
+    <td>${short(player)}</td>
+    <td>${(Number(roll)/100).toFixed(2)}</td>
+    <td>${targetCell}</td>
+    <td>${amountCell}</td>
+    <td>${won ? fmt(ethers.formatUnits(paidOut,tokenDecimals),2) : '0.00'}</td>
+    ${profitCell}
+    <td><span class="pill ${won?'win':'lose'}">${won?'WIN':'LOSS'}</span></td>
+    <td><a href="${CONFIG.EXPLORER_URL}/tx/${txHash}" target="_blank" rel="noopener">tx</a></td>
+  </tr>`;
+}
+
+async function renderLiveFeed(){
+  const body = document.getElementById('historyBody');
+  body.innerHTML = '<tr class="empty-row"><td colspan="8">Loading…</td></tr>';
+  try {
+    const ro   = diceContractRO || new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, getFallbackProvider());
+    const latest = await (provider || getFallbackProvider()).getBlockNumber();
+    const events = await ro.queryFilter(ro.filters.BetResolved(), Math.max(0, latest - CONFIG.FEED_BLOCK_LOOKBACK), latest);
+    // queryFilter returns oldest-to-newest; take the most recent MAX_FEED_ROWS
+    // then reverse so the newest lands first — order, not the (now-hidden)
+    // bet ID, is what keeps "most recent on top" true.
+    const recent = events.slice(-MAX_FEED_ROWS).reverse();
+    if (!recent.length){ body.innerHTML = '<tr class="empty-row"><td colspan="8">No recent bets yet.</td></tr>'; return; }
+    const rows = await Promise.all(recent.map((ev) =>
+      feedRowHtml(ro, ev.args.player, ev.args.betId, ev.args.won, ev.args.roll, ev.args.paidOut, ev.transactionHash)
+    ));
+    body.innerHTML = rows.join('');
+  } catch(e){ body.innerHTML = '<tr class="empty-row"><td colspan="8">Could not load feed.</td></tr>'; }
+}
+
+/// Live updates (see subscribeLiveBankroll) call this instead of re-running
+/// renderLiveFeed() from scratch — that was replacing the whole 50-row table
+/// on every single event, causing the entire list to flash/rebuild instead of
+/// just the newest result appearing. This inserts one row at the top with a
+/// slide-in animation and trims the oldest row past the cap, so the rest of
+/// the list just settles down a slot the normal way a table naturally does.
+async function prependLiveFeedRow({ player, betId, won, roll, paidOut, transactionHash }){
+  if (currentHistTab !== 'feed') return;
+  const body = document.getElementById('historyBody');
+  const ro = diceContractRO || new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, getFallbackProvider());
+  const html = await feedRowHtml(ro, player, betId, won, roll, paidOut, transactionHash);
+
+  const placeholder = body.querySelector('.empty-row');
+  if (placeholder) placeholder.remove();
+
+  const temp = document.createElement('tbody');
+  temp.innerHTML = html;
+  const row = temp.firstElementChild;
+  row.classList.add('row-in');
+  body.prepend(row);
+
+  while (body.children.length > MAX_FEED_ROWS) {
+    body.lastElementChild.remove();
+  }
+}
+
+document.querySelectorAll('.history .tab-btn').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.history .tab-btn').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    currentHistTab = b.dataset.hist;
+    if (currentHistTab === 'mine') renderHistory(); else renderLiveFeed();
+  });
+});
+
+/* =========================================================================
+   GAUGE + ODOMETER
+   ========================================================================= */
+function buildOdometer(){
+  const el = document.getElementById('odometer');
+  el.innerHTML = '';
+  ['d0','d1','dot','d2','d3'].forEach(p => {
+    const d = document.createElement('div');
+    d.className = 'odo-digit' + (p==='dot' ? ' dot' : '');
+    d.id = 'odo-' + p;
+    d.textContent = p==='dot' ? '.' : '0';
+    el.appendChild(d);
+  });
+}
+function setOdometer(rollBps, cls){
+  const w = String(Math.floor(rollBps/100)).padStart(2,'0');
+  const f = String(rollBps%100).padStart(2,'0');
+  ['d0','d1','d2','d3'].forEach((id,i) => {
+    const n = document.getElementById('odo-'+id);
+    n.textContent = (w+f)[i];
+    n.className = 'odo-digit' + (cls ? ' '+cls : ' lit');
+  });
+}
+function animateOdometerRoll(finalBps, won){
+  if (window.matchMedia('(prefers-reduced-motion:reduce)').matches){ setOdometer(finalBps, won?'win':'lose'); return; }
+  let ticks = 0;
+  const iv = setInterval(() => {
+    ticks++;
+    if (ticks >= 14){ clearInterval(iv); setOdometer(finalBps, won?'win':'lose'); return; }
+    setOdometer(Math.floor(Math.random()*10000), 'lit');
+  }, 55);
+}
+function setGauge(pct){
+  pct = Math.max(0, Math.min(100, pct));
+  document.getElementById('gaugeReadout').textContent = pct.toFixed(2);
+  document.getElementById('gaugeArc').setAttribute('stroke-dashoffset', 408 - (pct/100)*408);
+  document.getElementById('needle').setAttribute('transform', `rotate(${-90 + (pct/100)*180} 150 150)`);
+}
+
+/* =========================================================================
+   UTIL
+   ========================================================================= */
+function short(addr){ return addr ? addr.slice(0,6)+'…'+addr.slice(-4) : ''; }
+function fmt(str, dp=2){
+  const n = Number(str);
+  return isFinite(n) ? n.toLocaleString(undefined,{maximumFractionDigits:dp,minimumFractionDigits:dp}) : '—';
+}
+function parseAmount(str){ try{ return ethers.parseUnits(String(str||'0'),tokenDecimals); }catch(e){return 0n;} }
+function formatAmount(bn){ try{ return ethers.formatUnits(bn,tokenDecimals); }catch(e){return '0';} }
+
+function toast(msg, type){
+  const c = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className = 'toast' + (type ? ' '+type : '');
+  el.innerHTML = msg;
+  c.appendChild(el);
+  setTimeout(() => el.remove(), 6000);
+}
+
+document.getElementById('footerVerify').addEventListener('click', e => {
+  e.preventDefault();
+  toast('Every roll = keccak256(blockhash(N+1), blockhash(N+2), betId, your address, your seed) mod 10000. Call previewRoll(betId) on the contract to recompute any result.');
+});
+
+/* =========================================================================
+   CURSOR FLAME GLOW
+   ========================================================================= */
+(function(){
+  const glow = document.getElementById('cursorGlow');
+  if (!glow || window.matchMedia('(prefers-reduced-motion:reduce)').matches) return;
+  let raf = null, gx = 0, gy = 0, hideTimer = null;
+  window.addEventListener('mousemove', (e) => {
+    gx = e.clientX; gy = e.clientY;
+    glow.classList.add('active');
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => glow.classList.remove('active'), 1500);
+    if (!raf){
+      raf = requestAnimationFrame(() => {
+        glow.style.setProperty('--gx', gx + 'px');
+        glow.style.setProperty('--gy', gy + 'px');
+        raf = null;
+      });
+    }
+  }, { passive: true });
+  window.addEventListener('mouseleave', () => glow.classList.remove('active'));
+})();
+
+/* =========================================================================
+   TOP TOKEN STRIP — copy button
+   ========================================================================= */
+(function(){
+  const addrEl = document.getElementById('topOtrAddr');
+  const copyBtn = document.getElementById('copyOtrAddrBtn');
+  addrEl.textContent = short(addrEl.dataset.full);
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(addrEl.dataset.full);
+      toast('OTR contract address copied.', 'success');
+    } catch(e){ toast('Could not copy — copy manually.', 'error'); }
+  });
+})();
+
+/* =========================================================================
+   LIVE POOL BANKROLL
+   The stats strip (Pool Bankroll, freeBankroll-derived cap, etc.) previously
+   only updated on the 20s refreshConfig() poll — any bet placed by *another*
+   player wouldn't move the number on your screen until that timer ticked.
+   Subscribing directly to the events that actually change the bankroll
+   (BetResolved, BankrollDeposited) makes it update the moment a block with
+   one of those lands, on par with how the Live Feed reflects fresh activity.
+   Uses a dedicated read-only contract on the fallback provider so this works
+   even before a wallet is connected.
+   ========================================================================= */
+function subscribeLiveBankroll(){
+  try {
+    const ro = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, getFallbackProvider());
+    ro.on('BetResolved', (betId, player, won, roll, paidOut, paidDirectly, payload) => {
+      refreshConfig();
+      // Also keep the Live Feed current in real time, not just on tab click —
+      // insert just this one row instead of re-rendering the whole table.
+      const transactionHash = payload?.log?.transactionHash || payload?.transactionHash || '';
+      prependLiveFeedRow({ player, betId, won, roll, paidOut, transactionHash });
+    });
+    ro.on('BankrollDeposited', () => refreshConfig());
+  } catch(e){ console.warn('subscribeLiveBankroll:', e); }
+}
+
+/* =========================================================================
+   INIT
+   ========================================================================= */
+buildOdometer();
+setOdometer(0, 'lit');
+setGauge(50);
+document.getElementById('footerContract').textContent = short(CONFIG.CONTRACT_ADDRESS);
+refreshConfig();
+subscribeLiveBankroll();
+</script>
+</body>
+</html>
