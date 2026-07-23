@@ -341,9 +341,8 @@
 
   /* ── stats strip ── */
   .stats-strip{
-    grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:0;padding:16px 6px;
+    grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:0;padding:16px 6px;
   }
-  @media(max-width:900px){.stats-strip{grid-template-columns:repeat(3,1fr);}}
   @media(max-width:520px){.stats-strip{grid-template-columns:repeat(2,1fr);}}
   .stat{text-align:center;padding:6px 10px;border-right:1px solid var(--line);}
   .stat:last-child{border-right:none;}
@@ -554,7 +553,6 @@
 
   <!-- ═══ STATS STRIP -->
   <section class="panel stats-strip">
-    <div class="stat"><div class="k">Pool Bankroll</div><div class="v" id="statBankroll">—</div></div>
     <div class="stat"><div class="k">Roll under range</div><div class="v" id="statChanceRange">—</div></div>
     <div class="stat"><div class="k">Total bets</div><div class="v" id="statTotalBets">—</div></div>
     <div class="stat"><div class="k">Status</div><div class="v" id="statPaused">—</div></div>
@@ -593,8 +591,8 @@
         <div class="fp-icon">🔒</div>
         <div class="fp-title">Pool Payout Cap</div>
         <div class="fp-body">
-          No single bet can ever pay out more than <em>the pool's current tiered cap</em>,
-          a flat ceiling that grows with the bankroll instead of chasing a shifting
+          No single bet can ever pay out more than <em>1,000,000 OTR</em>, a fixed
+          ceiling regardless of pool size, instead of chasing a shifting
           percentage. That keeps one lucky roll (or a scripted attack) from draining the
           pool, and it makes trying to manipulate a block pointless: whatever you'd stand
           to gain is smaller than the validator reward you'd be giving up.
@@ -685,14 +683,14 @@
    CONFIG — fill in your deployed addresses before going live
    ========================================================================= */
 const CONFIG = {
-  CHAIN_ID:       943,
-  CHAIN_ID_HEX:  '0x3AF',
-  CHAIN_NAME:    'PulseChain Testnet v4',
-  RPC_URL:       'https://rpc.v4.testnet.pulsechain.com',
-  EXPLORER_URL:  'https://scan.v4.testnet.pulsechain.com',
-  NATIVE_SYMBOL: 'tPLS',
-  CONTRACT_ADDRESS: '0xE1509aFD799Af5D8904f17566d196F4383c6eE5C', // OnlyRolls game contract (testnet)
-  TOKEN_ADDRESS:    '0x661386753568D8F014D8040479Dc9e258eB93aC6', // tOTR (testnet)
+  CHAIN_ID:       369,
+  CHAIN_ID_HEX:  '0x171',
+  CHAIN_NAME:    'PulseChain',
+  RPC_URL:       'https://rpc.pulsechain.com',
+  EXPLORER_URL:  'https://scan.pulsechain.com',
+  NATIVE_SYMBOL: 'PLS',
+  CONTRACT_ADDRESS: '0x44b19e73d0803d58b0756F61EC50FA4FA4C1Fe9F', // OnlyRolls game contract (mainnet) — LIVE
+  TOKEN_ADDRESS:    '0xf28956aad0eec5cd30492d29f6e98e2011c25203', // OTR (mainnet)
   POLL_MS:          1000, // block-detection poll interval — PulseChain blocks land ~every 10s, so this reacts quickly without hammering the RPC
   FEED_BLOCK_LOOKBACK: 20000,
 };
@@ -1006,15 +1004,6 @@ async function refreshConfig(){
       freeBankroll: freeBR
     };
 
-    // Bankroll (full balance)
-    let bankrollBal = 0n;
-    try {
-      const t = tokenContract || new ethers.Contract(CONFIG.TOKEN_ADDRESS, ERC20_ABI, getFallbackProvider());
-      bankrollBal = await t.balanceOf(CONFIG.CONTRACT_ADDRESS);
-    } catch(e){}
-
-    document.getElementById('statBankroll').textContent =
-      fmt(ethers.formatUnits(bankrollBal, tokenDecimals), 0) + ' OTR';
     document.getElementById('statChanceRange').textContent =
       (liveConfig.minChanceBps/100).toFixed(2) + ' – ' + (liveConfig.maxChanceBps/100).toFixed(2);
     document.getElementById('statTotalBets').textContent = nextId.toString();
@@ -1634,8 +1623,8 @@ document.getElementById('footerVerify').addEventListener('click', e => {
 
 /* =========================================================================
    LIVE POOL BANKROLL
-   The stats strip (Pool Bankroll, freeBankroll-derived cap, etc.) previously
-   only updated on the 20s refreshConfig() poll — any bet placed by *another*
+   The freeBankroll-derived payout cap previously only updated on the 20s
+   refreshConfig() poll — any bet placed by *another*
    player wouldn't move the number on your screen until that timer ticked.
    Subscribing directly to the events that actually change the bankroll
    (BetResolved, BankrollDeposited) makes it update the moment a block with
