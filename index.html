@@ -771,7 +771,168 @@
 <div class="toast-container" id="toasts"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
-<script src="assetQuote.js"></script>
+<script>
+// Inlined from assetQuote.js (kept as a separate file too, for the Node/
+// Hardhat test suite's require() - see multiroll/test/assetQuote.test.js)
+// so index.html has no external same-origin file dependency at all - a
+// missing/forgotten second file on a static host (exactly what happened
+// when this hosted deploy only had index.html + otr.gif, no assetQuote.js)
+// silently breaks every non-OTR asset quote with no clear error, so this
+// removes that whole failure class rather than just fixing the one host.
+// Frontend helper for the multi-asset betting layer - computes an accurate
+// max-bet-in-asset-terms and a safe minOtrOut for placeBetWithAsset, using
+// the contract's own quoteAssetToOtr/quoteOtrToAssetIn view helpers (real
+// PulseX router quotes against live pool reserves) instead of a naive
+// spot-price multiplication. Works with any registered asset (native or
+// ERC20) via `dice`'s existing supportedAssets/quote* views, so adding more
+// assets later needs no changes here - see MultiRollDice.sol's "Multi-asset
+// registry" section and its quoteAssetToOtr/quoteOtrToAssetIn comments.
+//
+// `dice` is expected to be an ethers v6 Contract (read-only is fine) whose
+// ABI includes at least: maxBet, currentPayoutCap, houseEdgeBps,
+// quoteAssetToOtr, quoteOtrToAssetIn.
+(function (root, factory) {
+  const mod = factory();
+  if (typeof root !== "undefined") {
+    root.AssetQuote = mod;
+  }
+})(typeof window !== "undefined" ? window : (typeof globalThis !== "undefined" ? globalThis : this), function () {
+
+  const BPS_DENOM = 10000n;
+
+  // Fraction of the raw pool-implied max bet actually offered as "your max" -
+  // leaves headroom for the pool moving between quote time and tx
+  // confirmation (a few blocks on PulseChain), so a copy-pasted "max" doesn't
+  // immediately revert on ExceedsMaxExposure/BetTooLarge from a stale quote.
+  const DEFAULT_MAX_BET_SAFETY_BPS = 300; // 3%
+
+  // Default slippage tolerance for the swap-IN leg's minOtrOut param
+  // (placeBetWithAsset). The payout-swap-back leg is a separate, fixed
+  // protocol-wide setting now (MultiRollDice.sol's swapSlippageBps,
+  // default 3%) - not something the frontend computes or passes in.
+  const DEFAULT_SLIPPAGE_BPS = 300; // 3%
+
+  function toBig(x) {
+    return typeof x === "bigint" ? x : BigInt(x);
+  }
+
+  /**
+   * Largest OTR-denominated bet whose payout stays within the contract's
+   * current binding cap for a given win chance:
+   *   payout = otrIn * (10000 - houseEdgeBps) / winChanceBps <= cap
+   *   otrIn <= cap * winChanceBps / (10000 - houseEdgeBps)
+   * This mirrors _placeBetInternal's own ExceedsMaxExposure check exactly,
+   * so a bet sized at or under this value will never revert for that reason
+   * (absent a race with another bet changing the free bankroll in between).
+   */
+  async function maxOtrBetForWinChance(dice, winChanceBps) {
+    const wc = toBig(winChanceBps);
+    if (wc <= 0n) throw new Error("winChanceBps must be > 0");
+
+    const [maxBetOtr, payoutCapOtr, houseEdgeBps] = await Promise.all([
+      dice.maxBet(),
+      dice.currentPayoutCap(),
+      dice.houseEdgeBps(),
+    ]);
+
+    const edgeDenom = BPS_DENOM - toBig(houseEdgeBps);
+    const otrFromCap = (payoutCapOtr * wc) / edgeDenom;
+    return maxBetOtr < otrFromCap ? maxBetOtr : otrFromCap;
+  }
+
+  /**
+   * Max amount of `asset` a player can bet right now at `winChanceBps`
+   * without exceeding maxBet or the current payout cap, expressed in asset
+   * units and shaved by a safety margin. This is what a "Max" button should
+   * fill the bet-amount field with when betting via placeBetWithAsset.
+   */
+  async function computeMaxBetInAsset(dice, asset, winChanceBps, opts = {}) {
+    const safetyBps = opts.safetyBps ?? DEFAULT_MAX_BET_SAFETY_BPS;
+
+    const otrCeiling = await maxOtrBetForWinChance(dice, winChanceBps);
+    if (otrCeiling === 0n) return 0n;
+
+    const rawAssetIn = await dice.quoteOtrToAssetIn(asset, otrCeiling);
+    // Shave the safety margin off the asset amount (not the OTR side) - a
+    // smaller asset input swaps to less OTR, which is exactly the direction
+    // that protects the bet from the pool having moved slightly by the time
+    // the transaction actually lands.
+    return rawAssetIn - (rawAssetIn * BigInt(safetyBps)) / BPS_DENOM;
+  }
+
+  /**
+   * Live-quotes assetAmount -> expected OTR via the contract's own
+   * quoteAssetToOtr, then derives minOtrOut for placeBetWithAsset's
+   * swap-in slippage-protection parameter.
+   */
+  async function computeMinOtrOut(dice, asset, assetAmount, opts = {}) {
+    const slippageBps = opts.slippageBps ?? DEFAULT_SLIPPAGE_BPS;
+    const expectedOtr = await dice.quoteAssetToOtr(asset, assetAmount);
+    const minOtrOut = expectedOtr - (expectedOtr * BigInt(slippageBps)) / BPS_DENOM;
+    return { expectedOtr, minOtrOut };
+  }
+
+  /**
+   * How much `asset` a payout of `otrAmount` OTR would currently swap out to
+   * via the contract's own quoteOtrToAssetOut (the payout-direction path,
+   * cfg.pathFromOtr - distinct from quoteAssetToOtr/quoteOtrToAssetIn, which
+   * both quote the swap-IN direction). This is what a winning bet actually
+   * converts to on resolution, so it's what payout/profit previews should
+   * show for an asset-origin bet instead of the raw OTR figure. Best-effort:
+   * returns null (never throws) if the quote call fails for any reason, so a
+   * broken/temporary router quote degrades the preview gracefully instead of
+   * breaking it.
+   */
+  async function computePayoutInAsset(dice, asset, otrAmount) {
+    try {
+      return await dice.quoteOtrToAssetOut(asset, otrAmount);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Full quote bundle for a proposed asset bet - everything a frontend needs
+   * to preview a placeBetWithAsset call and warn the user before they sign:
+   * expected OTR from the swap-in, the minOtrOut to pass, the resulting
+   * payout/profit in both OTR and (best-effort) the origin asset itself,
+   * whether the payout would exceed the current cap (i.e. the tx would
+   * revert), and the live max-bet-in-asset figure to show as a hint.
+   */
+  async function quoteAssetBet(dice, asset, assetAmount, winChanceBps, opts = {}) {
+    const [{ expectedOtr, minOtrOut }, maxBetAsset, houseEdgeBps, payoutCapOtr] = await Promise.all([
+      computeMinOtrOut(dice, asset, assetAmount, opts),
+      computeMaxBetInAsset(dice, asset, winChanceBps, opts),
+      dice.houseEdgeBps(),
+      dice.currentPayoutCap(),
+    ]);
+
+    const wc = toBig(winChanceBps);
+    const payout = (expectedOtr * (BPS_DENOM - toBig(houseEdgeBps))) / wc;
+    const exceedsCap = payout > payoutCapOtr;
+
+    // Payout/profit in the bet's own asset terms - what a winning bet would
+    // actually convert to and net beyond the original assetAmount, mirroring
+    // the OTR-direct math's `profit = payout - amount` exactly, just with
+    // payout quoted via the payout-direction swap instead of the swap-in one.
+    const payoutAsset = await computePayoutInAsset(dice, asset, payout);
+    const profitAsset = payoutAsset !== null ? payoutAsset - assetAmount : null;
+
+    return { expectedOtr, minOtrOut, payout, payoutCapOtr, exceedsCap, maxBetAsset, payoutAsset, profitAsset };
+  }
+
+  return {
+    BPS_DENOM,
+    DEFAULT_MAX_BET_SAFETY_BPS,
+    DEFAULT_SLIPPAGE_BPS,
+    maxOtrBetForWinChance,
+    computeMaxBetInAsset,
+    computeMinOtrOut,
+    computePayoutInAsset,
+    quoteAssetBet,
+  };
+});
+</script>
 <script>
 /* =========================================================================
    CONFIG — fill in your deployed addresses before going live
