@@ -549,7 +549,7 @@
       <!-- MANUAL MODE -->
       <div id="manualPanel">
         <div class="field">
-          <label>Pay with <span class="hint">bets always settle in OTR</span></label>
+          <label>Pay with</label>
           <!-- Native <select><option> can't render an <img> inside an option
                in any browser, so the asset picker is a small custom
                listbox instead, styled to match the wallet modal's own
@@ -635,7 +635,7 @@
     </div>
     <div class="table-scroll">
       <table>
-        <thead><tr><th>#</th><th>Roll</th><th>Target</th><th>Bet (OTR)</th><th>Payout (OTR)</th><th>Profit (OTR)</th><th>Result</th><th>Tx</th></tr></thead>
+        <thead><tr><th>#</th><th>Roll</th><th>Target</th><th>Asset</th><th>Bet Size</th><th>Profit (OTR)</th><th>Result</th><th>Tx</th></tr></thead>
         <tbody id="historyBody">
           <tr class="empty-row"><td colspan="8">Connect your wallet to see your bet history.</td></tr>
         </tbody>
@@ -1028,6 +1028,7 @@ const DICE_ABI = [
   "function getSupportedAssets() view returns (address[])",
   "function supportedAssets(address) view returns (bool exists, bool enabled, bool isNative, address router)",
   "function betOriginAsset(uint256) view returns (address)",
+  "function betOriginAssetAmount(uint256) view returns (uint256)",
   "event BetPlaced(uint256 indexed betId, address indexed player, uint256 amount, uint32 winChanceBps, uint256 payout, uint64 commitBlock1, uint64 commitBlock2, uint128 clientSeed)",
   "event BetPlacedWithAsset(uint256 indexed betId, address indexed asset, uint256 assetAmountIn, uint256 otrReceived)",
   "event PayoutSwappedToAsset(uint256 indexed betId, address indexed asset, uint256 otrAmount, address indexed to)",
@@ -2153,7 +2154,14 @@ async function resolveAndFinish(betId, amount, winChanceBps, commitBlock2, place
     } catch(e){}
   }
 
+  // originAssetSymbol/betSizeText reflect what was WAGERED, independent of
+  // whether the payout side happened to swap back - a losing bet in eUSDC
+  // is still "eUSDC" in the Asset column, not blank just because no payout
+  // swap occurred for it to lose.
   const originAssetSymbol = originAsset ? originAsset.symbol : null;
+  const betSizeText = originAsset
+    ? `${fmt(ethers.formatUnits(originAsset.betSizeRaw, originAsset.decimals), 4)} ${originAssetSymbol}`
+    : `${fmt(formatAmount(amount), 2)} OTR`;
   const assetAmountText = (assetReceived !== null)
     ? `${fmt(ethers.formatUnits(assetReceived, originAsset.decimals), 4)} ${originAssetSymbol}`
     : null;
@@ -2165,7 +2173,7 @@ async function resolveAndFinish(betId, amount, winChanceBps, commitBlock2, place
     setResultBanner('Bet expired — refunded', 'lose');
     setStatus(`Bet expired - full stake refunded${assetNote}, no fee taken.`, resolveTx.hash);
     const rec = { refunded:true, betId:betId.toString(), roll:0, target:winChanceBps, amount, payout:0n, won:false,
-                  placeTx:placeTxHash, resolveTx:resolveTx.hash, originAssetSymbol: swappedToAsset ? originAssetSymbol : null,
+                  placeTx:placeTxHash, resolveTx:resolveTx.hash, originAssetSymbol, betSizeText,
                   assetAmountText };
     myHistory.unshift(rec);
     renderHistory();
@@ -2190,7 +2198,7 @@ async function resolveAndFinish(betId, amount, winChanceBps, commitBlock2, place
     setStatus(won ? `Payout sent to your wallet${assetNote}.` : 'Better luck next roll.', resolveTx.hash);
   }
   const rec = { betId:betId.toString(), roll, target:winChanceBps, amount, payout:paidOut, won,
-                placeTx:placeTxHash, resolveTx:resolveTx.hash, originAssetSymbol: swappedToAsset ? originAssetSymbol : null,
+                placeTx:placeTxHash, resolveTx:resolveTx.hash, originAssetSymbol, betSizeText,
                 assetAmountText, otrProfit: won ? otrProfit : 0n };
   myHistory.unshift(rec);
   renderHistory();
@@ -2246,7 +2254,10 @@ async function runAssetBet(assetAmount, winChanceBps){
   const asset = payAssetAddress;
   const isNative = payAssetIsNative;
   const symbol = payAssetSymbol;
-  const originAsset = { address: asset, symbol, isNative, decimals: payAssetDecimals };
+  // betSizeRaw carried through to resolveAndFinish/history so the Asset +
+  // Bet Size columns can show what was actually WAGERED (the typed asset
+  // amount), not the internal OTR-equivalent BetPlaced.amount value.
+  const originAsset = { address: asset, symbol, isNative, decimals: payAssetDecimals, betSizeRaw: assetAmount };
 
   if (!isNative) await ensureAssetAllowance(payAssetContract, assetAmount);
 
@@ -2317,9 +2328,13 @@ async function checkPendingBet(){
       const originAssetAddr = await ro.betOriginAsset(betId);
       if (originAssetAddr && originAssetAddr !== ethers.ZeroAddress){
         const info = supportedAssetsCache.find(a => a.address.toLowerCase() === originAssetAddr.toLowerCase());
+        // A resumed bet has no client-side "typed amount" left after a
+        // dropped session - read the real wagered amount back from the
+        // contract's own record (betOriginAssetAmount) instead.
+        const betSizeRaw = await ro.betOriginAssetAmount(betId).catch(() => 0n);
         originAsset = info
-          ? { address: info.address, symbol: info.symbol, isNative: info.isNative, decimals: info.decimals }
-          : { address: originAssetAddr, symbol: short(originAssetAddr), isNative: false, decimals: 18 };
+          ? { address: info.address, symbol: info.symbol, isNative: info.isNative, decimals: info.decimals, betSizeRaw }
+          : { address: originAssetAddr, symbol: short(originAssetAddr), isNative: false, decimals: 18, betSizeRaw };
       }
     } catch(e){}
     pendingBet = {
@@ -2438,33 +2453,37 @@ function renderHistory(){
   if (!myHistory.length){
     body.innerHTML = '<tr class="empty-row"><td colspan="8">No bets yet this session.</td></tr>'; return;
   }
-  // originAssetSymbol is only set when the payout/refund actually swapped
-  // back to the bet's origin asset (PayoutSwappedToAsset fired) - the OTR
-  // figures shown are still what the contract's Bet struct records
-  // internally (see runAssetBet's comment on BetPlaced.amount), this tag
-  // just clarifies what currency actually landed in the wallet. A winning
-  // split payout (assetAmountText + otrProfit both present) shows both
-  // halves instead of just the asset symbol, since neither figure alone
-  // tells the full story of what was received.
-  const assetTag = (r) => {
-    if (r.won && r.assetAmountText && r.otrProfit > 0n){
-      return ` <span style="color:var(--muted-2);font-size:0.65rem;">(${r.assetAmountText} + ${fmt(formatAmount(r.otrProfit),2)} OTR)</span>`;
-    }
-    if (r.assetAmountText) return ` <span style="color:var(--muted-2);font-size:0.65rem;">(${r.assetAmountText})</span>`;
-    return r.originAssetSymbol
-      ? ` <span style="color:var(--muted-2);font-size:0.65rem;">(${r.originAssetSymbol})</span>` : '';
-  };
+  // Asset + Bet Size reflect what was actually WAGERED (see resolveAndFinish's
+  // betSizeText/originAssetSymbol) regardless of win/loss/refund - a bet's
+  // origin asset doesn't change just because it lost or expired. Profit
+  // stays a pure OTR figure: on a win, the wagered asset itself is always
+  // returned in full (see MultiRollDice.sol's payout split), so any profit
+  // beyond that is entirely the OTR portion - no asset-side profit to show.
+  const winSplitNote = (r) => (r.won && r.assetAmountText && r.otrProfit > 0n)
+    ? ` <span style="color:var(--muted-2);font-size:0.65rem;">(stake returned + ${fmt(formatAmount(r.otrProfit),2)} OTR profit)</span>`
+    : '';
   body.innerHTML = myHistory.slice(0,50).map(r => {
-    if (r.refunded) return `<tr><td>#${r.betId}</td><td colspan="3">${fmt(formatAmount(r.amount),2)}</td><td>0.00</td><td>0.00</td><td><span class="pill lose">REFUNDED</span>${assetTag(r)}</td><td><a href="${CONFIG.EXPLORER_URL}/tx/${r.resolveTx}" target="_blank" rel="noopener">tx</a></td></tr>`;
+    const assetCell = r.originAssetSymbol || 'OTR';
+    const betSizeCell = r.betSizeText || (fmt(formatAmount(r.amount),2) + ' OTR');
+    if (r.refunded) return `<tr>
+      <td>#${r.betId}</td>
+      <td>—</td>
+      <td>—</td>
+      <td>${assetCell}</td>
+      <td>${betSizeCell}</td>
+      <td>0.00</td>
+      <td><span class="pill lose">REFUNDED</span></td>
+      <td><a href="${CONFIG.EXPLORER_URL}/tx/${r.resolveTx}" target="_blank" rel="noopener">tx</a></td>
+    </tr>`;
     const profit = r.won ? (r.payout - r.amount) : -r.amount;
     return `<tr>
       <td>#${r.betId}</td>
       <td>${(r.roll/100).toFixed(2)}</td>
       <td>&lt; ${(r.target/100).toFixed(2)}</td>
-      <td>${fmt(formatAmount(r.amount),2)}</td>
-      <td>${r.won ? fmt(formatAmount(r.payout),2) : '0.00'}</td>
+      <td>${assetCell}</td>
+      <td>${betSizeCell}</td>
       ${profitCellHtml(profit)}
-      <td><span class="pill ${r.won?'win':'lose'}">${r.won?'WIN':'LOSS'}</span>${assetTag(r)}</td>
+      <td><span class="pill ${r.won?'win':'lose'}">${r.won?'WIN':'LOSS'}</span>${winSplitNote(r)}</td>
       <td><a href="${CONFIG.EXPLORER_URL}/tx/${r.resolveTx}" target="_blank" rel="noopener">tx</a></td>
     </tr>`;
   }).join('');
@@ -2480,24 +2499,66 @@ const MAX_FEED_ROWS = 50;
 /// rather than the bet ID — order in the list is what conveys "most recent",
 /// not a number, so nothing depends on the ID being visible.
 async function feedRowHtml(ro, player, betId, won, roll, paidOut, txHash){
-  let targetCell = '—', amountCell = '—', profitCell = '<td>—</td>';
+  let targetCell = '—', assetCell = 'OTR', betSizeCell = '—', profitCell = '<td>—</td>';
   try {
-    const bet = await ro.bets(betId);
+    const [bet, originAssetAddr] = await Promise.all([
+      ro.bets(betId),
+      ro.betOriginAsset(betId).catch(() => ethers.ZeroAddress),
+    ]);
     targetCell = '&lt; ' + (Number(bet.winChanceBps)/100).toFixed(2);
-    amountCell = fmt(ethers.formatUnits(bet.amount, tokenDecimals), 2);
     const profit = won ? (paidOut - bet.amount) : -bet.amount;
     profitCell = profitCellHtml(profit);
+
+    if (originAssetAddr && originAssetAddr !== ethers.ZeroAddress){
+      // Public feed row for ANY player's bet - no client-side "typed amount"
+      // to fall back on, so both the asset symbol/decimals and the actual
+      // wagered size come straight from the contract's own records.
+      const info = supportedAssetsCache.find(a => a.address.toLowerCase() === originAssetAddr.toLowerCase());
+      const symbol = info ? info.symbol : short(originAssetAddr);
+      const decimals = info ? info.decimals : 18;
+      const betSizeRaw = await ro.betOriginAssetAmount(betId).catch(() => 0n);
+      assetCell = symbol;
+      betSizeCell = fmt(ethers.formatUnits(betSizeRaw, decimals), 4) + ' ' + symbol;
+    } else {
+      assetCell = 'OTR';
+      betSizeCell = fmt(ethers.formatUnits(bet.amount, tokenDecimals), 2) + ' OTR';
+    }
   } catch(e){}
   return `<tr>
     <td>${short(player)}</td>
     <td>${(Number(roll)/100).toFixed(2)}</td>
     <td>${targetCell}</td>
-    <td>${amountCell}</td>
-    <td>${won ? fmt(ethers.formatUnits(paidOut,tokenDecimals),2) : '0.00'}</td>
+    <td>${assetCell}</td>
+    <td>${betSizeCell}</td>
     ${profitCell}
     <td><span class="pill ${won?'win':'lose'}">${won?'WIN':'LOSS'}</span></td>
     <td><a href="${CONFIG.EXPLORER_URL}/tx/${txHash}" target="_blank" rel="noopener">tx</a></td>
   </tr>`;
+}
+
+/// Finds the most recent `targetCount` BetResolved events, searching
+/// backward in bounded chunks (rather than one single ever-growing range,
+/// which real RPC providers commonly reject past some block-span limit) and
+/// expanding as far as needed until enough are found or the chain's start
+/// is reached. This is what makes the Live Feed a genuine persistent public
+/// record instead of one that goes blank during any quiet stretch longer
+/// than a single fixed lookback window - a low-traffic period (or a launch
+/// with sparse early betting) no longer means "No recent bets yet" once the
+/// most recent bet scrolls outside a fixed recent-blocks cutoff; the search
+/// just keeps reaching further back until it finds them.
+async function findRecentBetEvents(ro, latest, targetCount){
+  const CHUNK = CONFIG.FEED_BLOCK_LOOKBACK; // keeps each eth_getLogs call bounded, RPC-provider-safe
+  const MAX_CHUNKS = 50; // up to 50 * CHUNK blocks back - generous without ever being a truly unbounded scan
+  let toBlock = latest;
+  let collected = [];
+  for (let i = 0; i < MAX_CHUNKS && toBlock >= 0; i++){
+    const fromBlock = Math.max(0, toBlock - CHUNK + 1);
+    const events = await ro.queryFilter(ro.filters.BetResolved(), fromBlock, toBlock);
+    collected = events.concat(collected); // preserve oldest-to-newest order across chunks
+    if (collected.length >= targetCount || fromBlock === 0) break;
+    toBlock = fromBlock - 1;
+  }
+  return collected;
 }
 
 async function renderLiveFeed(){
@@ -2510,12 +2571,12 @@ async function renderLiveFeed(){
   try {
     const ro   = getReadOnlyDice();
     const latest = await (provider || getFallbackProvider()).getBlockNumber();
-    const events = await ro.queryFilter(ro.filters.BetResolved(), Math.max(0, latest - CONFIG.FEED_BLOCK_LOOKBACK), latest);
-    // queryFilter returns oldest-to-newest; take the most recent MAX_FEED_ROWS
-    // then reverse so the newest lands first — order, not the (now-hidden)
-    // bet ID, is what keeps "most recent on top" true.
+    const events = await findRecentBetEvents(ro, latest, MAX_FEED_ROWS);
+    // events is oldest-to-newest; take the most recent MAX_FEED_ROWS then
+    // reverse so the newest lands first — order, not the (now-hidden) bet
+    // ID, is what keeps "most recent on top" true.
     const recent = events.slice(-MAX_FEED_ROWS).reverse();
-    if (!recent.length){ body.innerHTML = '<tr class="empty-row"><td colspan="8">No recent bets yet.</td></tr>'; return; }
+    if (!recent.length){ body.innerHTML = '<tr class="empty-row"><td colspan="8">No bets yet.</td></tr>'; return; }
     const rows = await Promise.all(recent.map((ev) =>
       feedRowHtml(ro, ev.args.player, ev.args.betId, ev.args.won, ev.args.roll, ev.args.paidOut, ev.transactionHash)
     ));
