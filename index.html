@@ -273,6 +273,40 @@
     padding:11px 12px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:0.95rem;
   }
   input[type=number]:focus,input[type=text]:focus,select:focus{border-color:var(--brass);}
+
+  /* ── custom asset picker (native <select><option> can't show icons) ── */
+  .asset-select{position:relative;}
+  .asset-select-btn{
+    width:100%;display:flex;align-items:center;gap:10px;
+    background:#0b1413;border:1px solid var(--line-strong);color:var(--paper);
+    padding:9px 12px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:0.95rem;
+    cursor:pointer;text-align:left;
+  }
+  .asset-select-btn:hover{border-color:var(--brass-dim);}
+  .asset-select-btn:focus-visible{outline:2px solid var(--pink);outline-offset:2px;}
+  .asset-select-icon{
+    width:24px;height:24px;border-radius:50%;flex-shrink:0;background:#1a2a28;
+    display:flex;align-items:center;justify-content:center;overflow:hidden;
+    font-size:0.68rem;font-weight:700;color:var(--brass);font-family:'Rajdhani',sans-serif;
+  }
+  .asset-select-icon img{width:100%;height:100%;object-fit:cover;display:block;}
+  .asset-select-label{flex:1;}
+  .asset-select-chevron{color:var(--muted-2);font-size:0.72rem;transition:transform 0.15s;}
+  .asset-select-btn[aria-expanded="true"] .asset-select-chevron{transform:rotate(180deg);}
+  .asset-menu{
+    position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:20;
+    background:var(--panel);border:1px solid var(--line-strong);border-radius:10px;
+    box-shadow:0 20px 50px rgba(0,0,0,0.5);padding:6px;max-height:280px;overflow-y:auto;
+    display:none;
+  }
+  .asset-menu.open{display:block;}
+  .asset-option{
+    display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;
+    background:transparent;border:none;border-radius:7px;cursor:pointer;
+    color:var(--paper);font-family:'JetBrains Mono',monospace;font-size:0.88rem;text-align:left;
+  }
+  .asset-option:hover,.asset-option.active{background:rgba(227,169,74,0.08);}
+
   .chance-slider{
     -webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:999px;
     margin:4px 0 10px;cursor:pointer;
@@ -430,7 +464,7 @@
     <div class="mark"><img src="otr.gif" alt="OnlyRolls" /></div>
   </div>
   <div class="header-right">
-    <a id="buyOtrBtn" class="buy-btn" href="https://ipfs.app.pulsex.com/?inputCurrency=PLS&outputCurrency=0xf28956aad0eec5cd30492d29f6e98e2011c25203" target="_blank" rel="noopener">Buy OTR</a>
+    <a id="buyOtrBtn" class="buy-btn" href="https://ipfs.app.pulsex.com/?inputCurrency=PLS&amp;outputCurrency=0xf28956aad0eec5cd30492d29f6e98e2011c25203" target="_blank" rel="noopener">Buy OTR</a>
     <a id="bridgeBtn" class="buy-btn" href="https://libertyswap.finance/" target="_blank" rel="noopener">Bridge to PulseChain</a>
     <div id="claimChip" class="claim-chip" style="display:none;">
       <span style="font-size:0.78rem;color:var(--muted);">Pending:</span>
@@ -455,6 +489,11 @@
   </div>
 </header>
 
+
+<div id="notDeployedBanner" style="display:none;margin:0 0 18px;padding:12px 16px;border:1px solid var(--pink);border-radius:8px;background:rgba(255,63,158,0.06);font-size:0.8rem;color:var(--muted);">
+  🧪 <strong style="color:var(--brass);">Experimental multi-asset build.</strong>
+  MultiRollDice has not been deployed anywhere yet - set <code class="mono">CONFIG.CONTRACT_ADDRESS</code> in this file once it is.
+</div>
 
 <div class="token-strip">
   <span class="k">OTR Token Contract</span>
@@ -498,6 +537,10 @@
         <div class="label">Your OTR Balance</div>
         <div class="amount" id="panelOtrBal" style="font-size:1.25rem;">—</div>
       </div>
+      <div id="payAssetBalanceWrap" style="display:none;">
+        <div class="label" id="payAssetBalLabel">Your PLS Balance</div>
+        <div class="amount" id="panelPayAssetBal" style="font-size:1.25rem;">—</div>
+      </div>
       <div class="no-deposit-note" id="noDepositNote">⚡ Bet directly from your wallet</div>
     </div>
 
@@ -505,6 +548,22 @@
 
       <!-- MANUAL MODE -->
       <div id="manualPanel">
+        <div class="field">
+          <label>Pay with <span class="hint">bets always settle in OTR</span></label>
+          <!-- Native <select><option> can't render an <img> inside an option
+               in any browser, so the asset picker is a small custom
+               listbox instead, styled to match the wallet modal's own
+               icon-list pattern (.wallet-option/.wallet-icon) elsewhere on
+               this page. -->
+          <div class="asset-select" id="assetSelectWrap">
+            <button type="button" class="asset-select-btn" id="assetSelectBtn" aria-haspopup="listbox" aria-expanded="false">
+              <span class="asset-select-icon" id="assetSelectIcon"><img src="https://cdn.dexscreener.com/cms/images/PWEQpZYkRql-1scO?width=64&height=64&fit=crop&quality=95&format=auto" alt="" /></span>
+              <span class="asset-select-label" id="assetSelectLabel">OTR</span>
+              <span class="asset-select-chevron">▾</span>
+            </button>
+            <div class="asset-menu" id="assetMenu" role="listbox"></div>
+          </div>
+        </div>
         <div class="field">
           <label>Bet amount <span class="hint" id="tokenSymLabel">OTR</span></label>
           <input type="number" id="betAmount" value="10" min="0" step="any" />
@@ -631,8 +690,33 @@
           against you.
         </div>
       </div>
+      <div class="fp-card">
+        <div class="fp-icon">💰</div>
+        <div class="fp-title">Winning With Another Asset? Your Stake Comes Back 100%</div>
+        <div class="fp-body">
+          Bet with USDC, HEX, wETH, or any other supported asset and win, and your <em>original
+          bet amount is restored to you in full</em>, in that same asset. Any profit above that
+          is paid out in OTR directly to your wallet. That OTR is entirely yours to do with as
+          you like: re-roll it, hold it,
+          <a href="https://emit.farm/farm/0x93674e744c1e3327e67C1115a9773D8B09Ac11B0" target="_blank" rel="noopener">stake it</a>,
+          or sell it — nothing is locked or earmarked. There's a PulseX portal at the
+          bottom of this page for convenient buying or selling of OTR whenever you want it.
+        </div>
+      </div>
     </div>
   </div>
+
+  <!-- ═══ SWAP PANEL (embedded PulseX) -->
+  <section style="grid-column:1/-1;margin-top:24px;display:flex;justify-content:center;">
+    <div style="max-width:480px;width:100%;border-radius:16px;overflow:hidden;background:var(--bg-2);">
+      <iframe
+        title="PulseX swap: PLS to OTR"
+        src="https://ipfs.app.pulsex.com/?inputCurrency=PLS&amp;outputCurrency=0xf28956aad0eec5cd30492d29f6e98e2011c25203"
+        width="100%" height="460" style="display:block;border:0;"
+        loading="lazy"
+      ></iframe>
+    </div>
+  </section>
 
 </main>
 
@@ -687,6 +771,7 @@
 <div class="toast-container" id="toasts"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+<script src="assetQuote.js"></script>
 <script>
 /* =========================================================================
    CONFIG — fill in your deployed addresses before going live
@@ -698,11 +783,43 @@ const CONFIG = {
   RPC_URL:       'https://rpc.pulsechain.com',
   EXPLORER_URL:  'https://scan.pulsechain.com',
   NATIVE_SYMBOL: 'PLS',
-  CONTRACT_ADDRESS: '0x44b19e73d0803d58b0756F61EC50FA4FA4C1Fe9F', // OnlyRolls game contract (mainnet) — LIVE
+  // LIVE mainnet MultiRollDice - deployed and configured via
+  // mainnet/scripts/deploy_multirolldice.js + configure_multirolldice.js
+  // (curated 9-asset launch list + payout-split payouts). Bankroll funding
+  // is a separate, later step (mainnet/scripts/deposit_bankroll_multirolldice.js).
+  CONTRACT_ADDRESS: '0xc8f22AA258077d2B67a28D94C3710D73Fc314079',
+
   TOKEN_ADDRESS:    '0xf28956aad0eec5cd30492d29f6e98e2011c25203', // OTR (mainnet)
+  // PulseX V1 router - shown in the UI for transparency about where swaps
+  // route through; matches the router address MultiRollDice.sol is
+  // constructed with (see multiroll/test/MultiRollDice.test.js).
+  ROUTER_ADDRESS:   '0x98bf93ebf5c380C0e6Ae8e192A7e2AE08edAcc02',
+  // Sentinel address MultiRollDice.sol uses to mean "native PLS" in its
+  // supportedAssets registry - must match NATIVE_ASSET in MultiRollDice.sol.
+  NATIVE_ASSET:     '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+  WPLS_ADDRESS:     '0xA1077a294dDE1B09bB078844df40758a5D0f9a27',
   POLL_MS:          1000, // block-detection poll interval — PulseChain blocks land ~every 10s, so this reacts quickly without hammering the RPC
   FEED_BLOCK_LOOKBACK: 20000,
 };
+
+// Every function that talks to the game contract before a wallet connects
+// (refreshConfig, renderLiveFeed, subscribeLiveBankroll) constructs an
+// ethers.Contract with CONFIG.CONTRACT_ADDRESS directly - with that address
+// blank (see the comment above), the ethers v6 Contract constructor throws
+// synchronously on the invalid empty address, before any of those
+// functions' own try/catch blocks get a chance to run. Gate all of them
+// behind this flag instead of letting that surface as unhandled promise
+// rejections and a broken-looking page on first load.
+const CONTRACT_DEPLOYED = !!CONFIG.CONTRACT_ADDRESS;
+if (!CONTRACT_DEPLOYED){
+  // This script tag sits at the very end of <body>, so every element above
+  // it (including this banner) is already parsed and in the DOM by the time
+  // this line runs - no need to wait for DOMContentLoaded (which, for a
+  // script this late in the document, may already have fired by the time a
+  // listener gets attached anyway).
+  const banner = document.getElementById('notDeployedBanner');
+  if (banner) banner.style.display = 'block';
+}
 
 /* =========================================================================
    ABIs
@@ -726,7 +843,24 @@ const DICE_ABI = [
   "function withdraw()",
   "function token() view returns (address)",
   "function paused() view returns (bool)",
+  // Multi-asset layer (NEW - see MultiRollDice.sol's "Multi-asset registry"
+  // section). Note: supportedAssets' public struct getter only returns its
+  // non-array fields (enabled, isNative) - Solidity's auto-generated getters
+  // elide dynamic-array struct members (pathToOtr/pathFromOtr), so those two
+  // fields are all this ABI declares for it. The paths themselves are never
+  // needed on the frontend - quoteAssetToOtr/quoteOtrToAssetIn already use
+  // them internally.
+  "function placeBetWithAsset(address asset, uint256 assetAmount, uint32 winChanceBps, uint128 clientSeed, uint256 minOtrOut, uint256 deadline) payable returns (uint256)",
+  "function quoteAssetToOtr(address asset, uint256 assetAmount) view returns (uint256)",
+  "function quoteOtrToAssetIn(address asset, uint256 otrAmount) view returns (uint256)",
+  "function quoteOtrToAssetOut(address asset, uint256 otrAmount) view returns (uint256)",
+  "function getSupportedAssets() view returns (address[])",
+  "function supportedAssets(address) view returns (bool exists, bool enabled, bool isNative, address router)",
+  "function betOriginAsset(uint256) view returns (address)",
   "event BetPlaced(uint256 indexed betId, address indexed player, uint256 amount, uint32 winChanceBps, uint256 payout, uint64 commitBlock1, uint64 commitBlock2, uint128 clientSeed)",
+  "event BetPlacedWithAsset(uint256 indexed betId, address indexed asset, uint256 assetAmountIn, uint256 otrReceived)",
+  "event PayoutSwappedToAsset(uint256 indexed betId, address indexed asset, uint256 otrAmount, address indexed to)",
+  "event ProfitKeptInOtr(uint256 indexed betId, address indexed to, uint256 amount)",
   "event BetResolved(uint256 indexed betId, address indexed player, bool won, uint16 roll, uint256 paidOut, bool paidDirectly)",
   "event BetRefunded(uint256 indexed betId, address indexed player, uint256 amount, bool paidDirectly)",
   "event BankrollDeposited(address indexed from, uint256 amount)",
@@ -755,7 +889,12 @@ const DICE_ABI = [
   "error ZeroAddress()",
   "error ZeroAmount()",
   "error RenounceDisabled()",
-  "error BadPayoutTiers()"
+  "error BadPayoutTiers()",
+  "error AssetNotSupported()",
+  "error AssetAlreadyRegistered()",
+  "error NativeAmountMismatch()",
+  "error UnexpectedNativeValue()",
+  "error SlippageTooHigh()"
 ];
 const ERC20_ABI = [
   "function balanceOf(address) view returns (uint256)",
@@ -776,6 +915,58 @@ let currentHistTab = 'feed';
 let myHistory = [];
 let liveConfig = { minBet:0n, maxBet:0n, houseEdgeBps:100, minChanceBps:100, maxChanceBps:9500, currentPayoutCap:0n, freeBankroll:0n };
 
+// ── Multi-asset "pay with" state ──
+// payAssetAddress: null means "plain OTR" (the original placeBet path).
+// Any non-null value is either CONFIG.NATIVE_ASSET or a registered ERC20
+// address discovered from the contract's own getSupportedAssets() list -
+// see loadSupportedAssets(). Adding a new asset on-chain (addSupportedAsset)
+// needs no frontend code change, it just shows up in the dropdown.
+let payAssetAddress = null;
+let payAssetIsNative = false;
+let payAssetSymbol = 'OTR';
+let payAssetDecimals = 18;
+let payAssetContract = null; // ERC20 contract instance; null for native PLS or plain OTR
+let supportedAssetsCache = []; // [{ address, isNative, symbol }]
+
+// Token icon URLs, keyed by lowercased address - '' means "checked, no icon
+// found" (distinct from undefined = "not checked yet"), so a failed/empty
+// lookup isn't retried every render. Populated from DexScreener - see
+// fetchTokenIcon(). Native PLS is keyed under CONFIG.NATIVE_ASSET but looked
+// up via WPLS's own address (DexScreener has no listing for the native-asset
+// sentinel itself).
+const tokenIconCache = {
+  // "OTR (direct)" isn't a real registered asset (address ''), so it's never
+  // reachable via fetchTokenIcon's address-keyed lookup - seed it directly.
+  '': 'https://cdn.dexscreener.com/cms/images/PWEQpZYkRql-1scO?width=64&height=64&fit=crop&quality=95&format=auto',
+};
+
+// Hardcoded overrides for assets where a plain per-address DexScreener
+// lookup picks the wrong image - eDAI/eUSDC/eUSDT/wETH are PulseChain-
+// bridged copies of the real Ethereum-mainnet assets, and DexScreener's
+// per-pair CMS image for their PulseChain WPLS pool doesn't reliably match
+// the coin's actual, well-known branding (confirmed by inspection this
+// session) - use each token's canonical CoinGecko icon instead (ETH's own
+// icon for wETH specifically, not a separate "wrapped" variant - matches
+// how wallets/exchanges conventionally display wrapped-ETH). Keyed by
+// lowercased PulseChain contract address, same as tokenIconCache.
+const ICON_OVERRIDES = {
+  '0xefd766ccb38eaf1dfd701853bfce31359239f305': 'https://coin-images.coingecko.com/coins/images/9956/large/Badge_Dai.png?1696509996',   // eDAI
+  '0x15d38573d2feeb82e7ad5187ab8c1d52810b1f07': 'https://coin-images.coingecko.com/coins/images/6319/large/USDC.png?1769615602',        // eUSDC
+  '0x0cb6f5a34ad42ec934882a05265a7d5f59b51a2f': 'https://coin-images.coingecko.com/coins/images/325/large/Tether.png?1696501661',        // eUSDT
+  '0x02dcdd04e3f455d838cd1249292c58f3b79e3c3c': 'https://coin-images.coingecko.com/coins/images/279/large/ethereum.png?1696501628',      // wETH
+  '0x57fde0a71132198bbec939b98976993d8d89d225': 'https://coin-images.coingecko.com/coins/images/10103/large/HEX-logo.png?1696510130',    // eHEX ("HEX from Ethereum" per Blockscout) - same brand as pHEX, just bridged
+};
+
+// Same idea as ICON_OVERRIDES, for the display symbol shown in the asset
+// dropdown/preview. Needed specifically for eHEX: its on-chain symbol()
+// returns plain "HEX" - identical to pHEX's own symbol() - so without this
+// override the two would be indistinguishable in the UI (Blockscout's own
+// contract names correctly disambiguate them as "HEX" vs "HEX from
+// Ethereum", confirmed on-chain before registering either).
+const SYMBOL_OVERRIDES = {
+  '0x57fde0a71132198bbec939b98976993d8d89d225': 'eHEX',
+};
+
 // A bet the connected wallet already has open (from this session or a prior
 // one) that still needs resolveBet called — see checkPendingBet().
 let pendingBet = null;
@@ -794,6 +985,10 @@ const ERROR_MESSAGES = {
   NoSuchBet: 'That bet no longer exists.',
   AlreadyResolved: 'That bet has already been resolved.',
   NotResolvableYet: "This bet can't be resolved yet — wait for the next block and try again.",
+  AssetNotSupported: 'That asset is not currently enabled for betting.',
+  NativeAmountMismatch: 'The PLS amount sent did not match the bet amount - try again.',
+  UnexpectedNativeValue: 'No PLS should be sent for a non-native asset bet.',
+  SlippageTooHigh: 'Slippage tolerance is set too high.',
 };
 /// Turns a thrown ethers error into a readable message. Custom contract
 /// errors decode via one of a few possible ethers v6 shapes depending on
@@ -888,6 +1083,10 @@ async function connectWith(rdns, legacyFlag, altRdns){
 }
 
 async function doConnect(ethProvider){
+  if (!CONTRACT_DEPLOYED){
+    toast('MultiRollDice is not deployed yet - this build is contract-ready but has no live address configured.', 'error');
+    return;
+  }
   try {
     await ethProvider.request({ method: 'eth_requestAccounts' });
     provider = new ethers.BrowserProvider(ethProvider, { chainId: CONFIG.CHAIN_ID, name: CONFIG.CHAIN_NAME });
@@ -902,6 +1101,7 @@ async function doConnect(ethProvider){
     try { tokenDecimals = Number(await tokenContract.decimals()); } catch(e){}
     try { tokenSymbol   = await tokenContract.symbol(); } catch(e){}
     document.getElementById('tokenSymLabel').textContent = tokenSymbol;
+    payAssetSymbol = tokenSymbol; // payAssetAddress starts null (plain OTR)
 
     document.getElementById('connectWalletBtn').style.display = 'none';
     document.getElementById('walletConnectedBar').style.display = 'flex';
@@ -912,7 +1112,8 @@ async function doConnect(ethProvider){
     ethProvider.on('chainChanged',    () => window.location.reload());
 
     await refreshBalances();
-    await refreshConfig();
+    await refreshConfig(true);
+    await loadSupportedAssets();
     renderHistory();
     await checkPendingBet();
     setInterval(refreshBalances, 12000);
@@ -971,7 +1172,251 @@ async function refreshBalances(){
     } else {
       document.getElementById('claimChip').style.display = 'none';
     }
+
+    if (payAssetAddress){
+      const payBal = payAssetIsNative
+        ? await provider.getBalance(userAddress)
+        : await payAssetContract.balanceOf(userAddress);
+      document.getElementById('panelPayAssetBal').textContent = fmt(ethers.formatUnits(payBal, payAssetDecimals), 4) + ' ' + payAssetSymbol;
+    }
   } catch(e){ console.warn('refreshBalances:', e); }
+}
+
+/* =========================================================================
+   MULTI-ASSET "PAY WITH" SELECTOR
+   Two layers:
+   1) loadSupportedAssetsStatic() - a hardcoded fallback list (PLS/WPLS) shown
+      immediately on page load, with no wallet connection and no deployed
+      contract required. Without this, the dropdown sat empty (just "OTR")
+      until a wallet connected AND MultiRollDice was deployed -
+      which, before deployment, is never, so nothing but the OTR option ever
+      appeared. This is what actually makes the selector visible/testable
+      right away.
+   2) loadSupportedAssets() - the real on-chain source of truth, called after
+      connecting to a live MultiRollDice deployment. It replaces the static
+      list with whatever's actually registered/enabled on-chain, so adding a
+      new asset later (owner calling addSupportedAsset) needs no frontend
+      change - it just appears here on the next reload/refresh.
+   ========================================================================= */
+/// DexScreener token icon lookup. Per the pair-shape confirmed via
+/// api.dexscreener.com/latest/dex/tokens/{address}: each returned pair has
+/// info.imageUrl, and a token can be listed against several quote assets -
+/// picking the pair quoted in WPLS specifically (rather than just pairs[0])
+/// matches how this whole project already treats WPLS as the fixed hub
+/// every asset routes through, so it's the most relevant/likely-canonical
+/// icon for a given token here. Falls back to '' (cached "no icon found",
+/// not re-fetched) if the token has no DexScreener listing at all, the
+/// fetch fails, or the API is unreachable (CORS/rate-limit/offline) - the
+/// letter-avatar fallback in the UI covers that case gracefully.
+async function fetchTokenIcon(address, isNative){
+  const cacheKey = address.toLowerCase();
+  if (tokenIconCache[cacheKey] !== undefined) return tokenIconCache[cacheKey];
+  if (ICON_OVERRIDES[cacheKey] !== undefined){
+    tokenIconCache[cacheKey] = ICON_OVERRIDES[cacheKey];
+    return ICON_OVERRIDES[cacheKey];
+  }
+  const lookupAddr = isNative ? CONFIG.WPLS_ADDRESS : address; // native PLS has no DexScreener listing of its own - WPLS is the same underlying asset
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${lookupAddr}`);
+    const data = await res.json();
+    const pairs = data.pairs || [];
+    const wplsPair = pairs.find(p =>
+      p.quoteToken?.address?.toLowerCase() === CONFIG.WPLS_ADDRESS.toLowerCase() ||
+      p.baseToken?.address?.toLowerCase() === CONFIG.WPLS_ADDRESS.toLowerCase()
+    ) || pairs[0];
+    const url = wplsPair?.info?.imageUrl || '';
+    tokenIconCache[cacheKey] = url;
+    return url;
+  } catch(e){
+    tokenIconCache[cacheKey] = '';
+    return '';
+  }
+}
+
+/// Builds the icon element's inner content for a menu row or the trigger
+/// button - an <img> if a cached icon URL is already known, otherwise a
+/// single-letter placeholder (swapped for the real icon in place once
+/// fetchTokenIcon resolves, via the same DOM node's data-icon-for attribute).
+function assetIconHtml(symbol, cachedUrl){
+  if (cachedUrl) return `<img src="${cachedUrl}" alt="" loading="lazy" />`;
+  return (symbol || '?').charAt(0).toUpperCase();
+}
+
+/* =========================================================================
+   MULTI-ASSET "PAY WITH" SELECTOR
+   Two layers:
+   1) loadSupportedAssetsStatic() - a hardcoded fallback list (PLS/WPLS) shown
+      immediately on page load, with no wallet connection and no deployed
+      contract required. Without this, the dropdown sat empty (just "OTR")
+      until a wallet connected AND MultiRollDice was deployed -
+      which, before deployment, is never, so nothing but the OTR option ever
+      appeared. This is what actually makes the selector visible/testable
+      right away.
+   2) loadSupportedAssets() - the real on-chain source of truth, called after
+      connecting to a live MultiRollDice deployment. It replaces the static
+      list with whatever's actually registered/enabled on-chain, so adding a
+      new asset later (owner calling addSupportedAsset) needs no frontend
+      change - it just appears here on the next reload/refresh.
+   ========================================================================= */
+function loadSupportedAssetsStatic(){
+  supportedAssetsCache = [
+    { address: CONFIG.NATIVE_ASSET, isNative: true,  symbol: CONFIG.NATIVE_SYMBOL },
+    { address: CONFIG.WPLS_ADDRESS, isNative: false, symbol: 'WPLS' },
+  ];
+  renderAssetMenu();
+}
+
+// Guards against overlapping calls (e.g. page init and doConnect firing
+// close together) stomping on the same shared supportedAssetsCache array -
+// a real, observed bug: two concurrent calls each rebuilding the array
+// produced duplicate entries. If a fetch is already in flight, later callers
+// just await that same one instead of starting a second.
+let loadSupportedAssetsInFlight = null;
+
+async function loadSupportedAssets(){
+  if (!CONTRACT_DEPLOYED){ loadSupportedAssetsStatic(); return; }
+  if (loadSupportedAssetsInFlight) return loadSupportedAssetsInFlight;
+
+  loadSupportedAssetsInFlight = (async () => {
+    const roDice = getReadOnlyDice();
+    if (!roDice) return;
+    const readProvider = provider || getFallbackProvider(); // one shared instance, not one per asset
+    try {
+      const list = await roDice.getSupportedAssets();
+      // Fetch every asset's config + symbol in parallel - sequentially
+      // awaiting up to 2 RPC round trips per asset (config, then symbol())
+      // meant a registry of 30+ assets could take many seconds end-to-end,
+      // during which the dropdown visibly sat on the static fallback list
+      // well after the rest of the page had loaded.
+      const entries = await Promise.all(list.map(async (addr) => {
+        let cfg;
+        try { cfg = await roDice.supportedAssets(addr); } catch(e){ return null; }
+        if (!cfg.enabled) return null;
+        let symbol;
+        if (cfg.isNative){
+          symbol = CONFIG.NATIVE_SYMBOL;
+        } else if (SYMBOL_OVERRIDES[addr.toLowerCase()]){
+          symbol = SYMBOL_OVERRIDES[addr.toLowerCase()];
+        } else {
+          try { symbol = await new ethers.Contract(addr, ERC20_ABI, readProvider).symbol(); }
+          catch(e){ symbol = short(addr); }
+        }
+        // Real per-asset decimals, not assumed - the registry now includes
+        // 8-decimal (pHEX/eHEX) and 6-decimal (eUSDC/eUSDT) assets alongside
+        // the original 18-decimal PLS/WPLS, so a hardcoded 18 would
+        // misinterpret amounts by many orders of magnitude for those.
+        let decimals = 18;
+        if (!cfg.isNative){
+          try { decimals = Number(await new ethers.Contract(addr, ERC20_ABI, readProvider).decimals()); }
+          catch(e){ /* keep the 18 fallback */ }
+        }
+        return { address: addr, isNative: cfg.isNative, symbol, decimals };
+      }));
+      supportedAssetsCache = entries.filter(Boolean);
+      renderAssetMenu();
+    } catch(e){ console.warn('loadSupportedAssets:', e); }
+  })();
+
+  try { await loadSupportedAssetsInFlight; }
+  finally { loadSupportedAssetsInFlight = null; }
+}
+
+/// Rebuilds the custom dropdown's option list from supportedAssetsCache
+/// (plus the always-present "OTR" entry), preserving the current selection
+/// if it's still valid. Icons render immediately from cache where
+/// available; anything not yet cached shows a letter placeholder and is
+/// fetched in the background, updating the specific icon node in place once
+/// resolved (not a full re-render, so an in-progress fetch elsewhere on the
+/// page - or the user having the menu open - isn't disrupted).
+function renderAssetMenu(){
+  const menu = document.getElementById('assetMenu');
+  const entries = [
+    { address: '', isNative: false, symbol: 'OTR', decimals: tokenDecimals },
+    ...supportedAssetsCache,
+  ];
+
+  menu.innerHTML = entries.map(a => {
+    const cached = tokenIconCache[a.address.toLowerCase()];
+    return `<button type="button" class="asset-option${a.address === (payAssetAddress||'') ? ' active' : ''}" role="option" data-address="${a.address}" data-symbol="${a.symbol}" data-native="${a.isNative}" data-decimals="${a.decimals}">` +
+      `<span class="asset-select-icon" data-icon-for="${a.address}">${assetIconHtml(a.symbol, cached)}</span>` +
+      `<span>${a.symbol}</span>` +
+    `</button>`;
+  }).join('');
+
+  menu.querySelectorAll('.asset-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectAsset(btn.dataset.address, btn.dataset.symbol, btn.dataset.native === 'true', Number(btn.dataset.decimals));
+      closeAssetMenu();
+    });
+  });
+
+  // Fetch and fill in real icons for anything not already cached - fire in
+  // parallel, each independently patches its own DOM node when it resolves.
+  for (const a of entries){
+    if (!a.address) continue; // "OTR" is pre-seeded in tokenIconCache, no lookup needed
+    if (tokenIconCache[a.address.toLowerCase()] !== undefined) continue;
+    fetchTokenIcon(a.address, a.isNative).then(url => {
+      if (!url) return;
+      document.querySelectorAll(`[data-icon-for="${a.address}"]`).forEach(el => {
+        el.innerHTML = `<img src="${url}" alt="" loading="lazy" />`;
+      });
+    });
+  }
+}
+
+function openAssetMenu(){
+  document.getElementById('assetMenu').classList.add('open');
+  document.getElementById('assetSelectBtn').setAttribute('aria-expanded', 'true');
+}
+function closeAssetMenu(){
+  document.getElementById('assetMenu').classList.remove('open');
+  document.getElementById('assetSelectBtn').setAttribute('aria-expanded', 'false');
+}
+document.getElementById('assetSelectBtn').addEventListener('click', () => {
+  const menu = document.getElementById('assetMenu');
+  menu.classList.contains('open') ? closeAssetMenu() : openAssetMenu();
+});
+document.addEventListener('click', (e) => {
+  if (!document.getElementById('assetSelectWrap').contains(e.target)) closeAssetMenu();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAssetMenu(); });
+
+async function selectAsset(address, symbol, isNative, decimals){
+  payAssetAddress = address || null;
+
+  if (!payAssetAddress){
+    payAssetIsNative = false;
+    payAssetSymbol   = tokenSymbol;
+    payAssetDecimals = tokenDecimals;
+    payAssetContract = null;
+    document.getElementById('payAssetBalanceWrap').style.display = 'none';
+  } else {
+    payAssetIsNative = isNative;
+    payAssetSymbol   = symbol || short(payAssetAddress);
+    // Real per-asset decimals (from supportedAssetsCache, resolved once in
+    // loadSupportedAssets - see its comment) - the registry includes
+    // 8-decimal and 6-decimal assets now, not just 18-decimal PLS/WPLS.
+    payAssetDecimals = Number.isFinite(decimals) ? decimals : 18;
+    payAssetContract = payAssetIsNative ? null : new ethers.Contract(payAssetAddress, ERC20_ABI, signer);
+    document.getElementById('payAssetBalanceWrap').style.display = 'block';
+    document.getElementById('payAssetBalLabel').textContent = 'Your ' + payAssetSymbol + ' Balance';
+  }
+
+  document.getElementById('tokenSymLabel').textContent = payAssetSymbol;
+  document.getElementById('assetSelectLabel').textContent = payAssetAddress ? payAssetSymbol : 'OTR';
+  const cached = tokenIconCache[(payAssetAddress || '').toLowerCase()];
+  document.getElementById('assetSelectIcon').innerHTML = assetIconHtml(payAssetAddress ? payAssetSymbol : 'OTR', cached);
+  menuMarkActive(payAssetAddress);
+
+  if (userAddress) await refreshBalances();
+  await fillMaxBetAmount();
+  updatePreview();
+}
+
+function menuMarkActive(address){
+  document.querySelectorAll('#assetMenu .asset-option').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.address === (address || ''));
+  });
 }
 
 document.getElementById('claimBtn').addEventListener('click', async () => {
@@ -998,8 +1443,26 @@ function getFallbackProvider(){
   return new ethers.JsonRpcProvider(CONFIG.RPC_URL, net, { staticNetwork: net });
 }
 
-async function refreshConfig(){
-  const ro = diceContractRO || new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, getFallbackProvider());
+/// Shared read-only contract accessor - falls back to a plain RPC provider
+/// when no wallet is connected yet (diceContractRO is only set inside
+/// doConnect()). Every read-only feature (config/stats, live feed, bankroll
+/// subscription, and the multi-asset preview) should go through this so none
+/// of them silently do nothing just because a wallet hasn't connected -
+/// quotes and on-chain reads don't require a signer.
+function getReadOnlyDice(){
+  if (!CONTRACT_DEPLOYED) return null;
+  return diceContractRO || new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, getFallbackProvider());
+}
+
+// autoFillMax: only true at genuinely deliberate moments (first load, wallet
+// connect, right after one of the player's own bets resolves) - NOT on the
+// periodic 20s poll or the global BetResolved/BankrollDeposited event
+// listeners (those fire from background activity, including OTHER players'
+// bets, and would otherwise silently overwrite a bet amount this player
+// typed in themselves).
+async function refreshConfig(autoFillMax){
+  if (!CONTRACT_DEPLOYED) return;
+  const ro = getReadOnlyDice();
   try {
     const [minBetV, maxBetV, edge, minChance, maxChance, payoutCap, freeBR, nextId, paused] = await Promise.all([
       ro.minBet(), ro.maxBet(), ro.houseEdgeBps(), ro.minWinChanceBps(), ro.maxWinChanceBps(),
@@ -1028,6 +1491,7 @@ async function refreshConfig(){
     document.getElementById('footerExplorer').href = CONFIG.EXPLORER_URL + '/address/' + CONFIG.CONTRACT_ADDRESS;
 
     onWinChanceInput();
+    if (autoFillMax) await fillMaxBetAmount();
     updatePreview();
   } catch(e){ console.warn('refreshConfig:', e); }
 }
@@ -1095,16 +1559,23 @@ function updatePreview(){
   // updatePreview() is the one function all of those paths funnel through.
   document.getElementById('winChanceSlider').value = chancePct;
 
-  const amount    = parseAmount(amountStr);
   const chanceBps = BigInt(Math.round(chancePct * 100));
+  document.getElementById('pvChance').textContent = chancePct ? chancePct.toFixed(2) : '—';
+  const mult = chanceBps > 0n ? multiplierFromChanceBps(chanceBps) : 0;
+  document.getElementById('pvMult').textContent = mult ? mult.toFixed(4) + '×' : '—';
+
+  // Paying with another asset needs a live router quote (async, debounced) -
+  // everything below this branch is the fast, purely-local OTR-direct path.
+  if (payAssetAddress){
+    scheduleAssetPreview(amountStr, chanceBps);
+    return;
+  }
+
+  const amount    = parseAmount(amountStr);
   const errEl     = document.getElementById('manualError');
   errEl.textContent = '';
 
-  document.getElementById('pvChance').textContent = chancePct ? chancePct.toFixed(2) : '—';
-
   const [maxWin, effMaxBet, exposureCap] = computeMaxWin(chanceBps);
-  const mult = chanceBps > 0n ? multiplierFromChanceBps(chanceBps) : 0;
-  document.getElementById('pvMult').textContent = mult ? mult.toFixed(4) + '×' : '—';
 
   const betMaxHint = document.getElementById('betMaxHint');
   if (maxWin > 0n){
@@ -1147,32 +1618,154 @@ function updatePreview(){
 }
 
 /* =========================================================================
+   MULTI-ASSET PREVIEW - live router quote, debounced
+   Mirrors updatePreview()'s OTR-direct math above, but the numbers can only
+   come from a real quote (quoteAssetToOtr/quoteOtrToAssetIn), not a local
+   formula - PulseX's price impact isn't something the frontend can compute
+   without RPC calls. See assetQuote.js for the actual math; this just wires
+   it into the same preview cells and error slot updatePreview() uses.
+   ========================================================================= */
+let assetPreviewToken = 0;
+let assetPreviewDebounceTimer = null;
+
+function scheduleAssetPreview(amountStr, chanceBps){
+  clearTimeout(assetPreviewDebounceTimer);
+  assetPreviewDebounceTimer = setTimeout(() => runAssetPreview(amountStr, chanceBps), 350);
+}
+
+async function runAssetPreview(amountStr, chanceBps){
+  const myToken = ++assetPreviewToken;
+  const errEl  = document.getElementById('manualError');
+  errEl.textContent = '';
+
+  const roDice = getReadOnlyDice();
+  const asset  = payAssetAddress;
+  if (!roDice || !asset || chanceBps <= 0n){
+    document.getElementById('pvPayout').textContent  = '—';
+    document.getElementById('pvProfit').textContent  = '—';
+    document.getElementById('pvMaxWin').textContent  = '—';
+    return;
+  }
+
+  try {
+    // Live max-bet-in-asset figure at this win chance - shown as the hint
+    // regardless of what's currently typed, same role as betMaxHint plays
+    // for the OTR-direct path.
+    const maxAssetBet = await AssetQuote.computeMaxBetInAsset(roDice, asset, chanceBps);
+    if (myToken !== assetPreviewToken) return; // a newer call has since superseded this one
+
+    const chancePct = Number(chanceBps) / 100;
+    document.getElementById('pvMaxBetSub').textContent =
+      fmt(ethers.formatUnits(maxAssetBet, payAssetDecimals), 4) + ' ' + payAssetSymbol + ' max bet at ' + chancePct.toFixed(2) + '% win chance';
+    // Kept deliberately plain - the player is just betting/winning in their
+    // chosen asset; the OTR swap happening underneath is an implementation
+    // detail, not something they need surfaced here (see the OTR-direct
+    // path's equivalent line for the fuller explanation, which still applies
+    // there since that's the asset being bet directly).
+    document.getElementById('betMaxHint').innerHTML =
+      `Max bet at this chance: <span class="cap" id="betMaxFill" data-raw="${maxAssetBet.toString()}" title="Click to fill this amount">${fmt(ethers.formatUnits(maxAssetBet, payAssetDecimals),4)} ${payAssetSymbol}</span>`;
+
+    const amount = parseAssetAmount(amountStr);
+    if (amount <= 0n){
+      document.getElementById('pvPayout').textContent = '—';
+      document.getElementById('pvProfit').textContent = '—';
+      document.getElementById('pvMaxWin').textContent = '—';
+      return;
+    }
+
+    const quote = await AssetQuote.quoteAssetBet(roDice, asset, amount, chanceBps);
+    if (myToken !== assetPreviewToken) return;
+
+    // Show payout/profit in the bet's own asset (what actually lands in the
+    // wallet on a win, post auto-swap-back), not the internal OTR amount -
+    // falls back to OTR only if the payout-direction quote itself failed
+    // (e.g. a momentarily broken reverse route), so the preview still shows
+    // something useful rather than going blank.
+    if (quote.payoutAsset !== null){
+      document.getElementById('pvPayout').textContent = fmt(ethers.formatUnits(quote.payoutAsset, payAssetDecimals), 4) + ' ' + payAssetSymbol;
+      document.getElementById('pvProfit').textContent = fmt(ethers.formatUnits(quote.profitAsset, payAssetDecimals), 4) + ' ' + payAssetSymbol;
+      document.getElementById('pvMaxWin').textContent = fmt(ethers.formatUnits(quote.payoutAsset, payAssetDecimals), 4) + ' ' + payAssetSymbol;
+    } else {
+      const profit = quote.payout - quote.expectedOtr;
+      document.getElementById('pvPayout').textContent = fmt(formatAmount(quote.payout), 2) + ' OTR';
+      document.getElementById('pvProfit').textContent = fmt(formatAmount(profit), 2) + ' OTR';
+      document.getElementById('pvMaxWin').textContent = fmt(formatAmount(quote.payout), 2) + ' OTR';
+    }
+
+    if (quote.exceedsCap){
+      errEl.innerHTML = `Payout would exceed the pool cap. Max bet at this chance: ` +
+        `<span class="cap" id="errMaxFill" data-raw="${maxAssetBet.toString()}" title="Click to fill this amount">${fmt(ethers.formatUnits(maxAssetBet, payAssetDecimals),4)} ${payAssetSymbol}</span>.`;
+    } else if (chanceBps < BigInt(liveConfig.minChanceBps) || chanceBps > BigInt(liveConfig.maxChanceBps)){
+      errEl.textContent = `Roll under to win must be ${(liveConfig.minChanceBps/100).toFixed(2)}–${(liveConfig.maxChanceBps/100).toFixed(2)}.`;
+    }
+  } catch(e){
+    console.warn('runAssetPreview:', e);
+    if (myToken === assetPreviewToken) errEl.textContent = 'Could not fetch a live quote for this asset/amount - try again.';
+  }
+}
+
+/* =========================================================================
    MANUAL BET CONTROL BINDINGS
    ========================================================================= */
+// Fills Bet Amount with the current max-bet figure for whatever's currently
+// selected (OTR-direct or the chosen pay asset) at the current win chance -
+// the OTR-direct figure is a local formula; a pay-asset figure needs a live
+// router quote, same as the rest of the asset preview path. Called both by
+// the explicit "max" quick button AND automatically whenever the odds
+// change or the pay asset changes (see the event listeners below) - NOT
+// wired into updatePreview() or the periodic refreshConfig() poll, since
+// those fire on every keystroke/timer tick and would otherwise stomp a bet
+// amount the player deliberately typed in themselves.
+async function fillMaxBetAmount(){
+  const el = document.getElementById('betAmount');
+  const chanceBps = BigInt(Math.round(parseFloat(document.getElementById('winChance').value || '0') * 100));
+  if (payAssetAddress){
+    const roDice = getReadOnlyDice();
+    if (!roDice) return;
+    try {
+      const maxAssetBet = await AssetQuote.computeMaxBetInAsset(roDice, payAssetAddress, chanceBps);
+      el.value = ethers.formatUnits(maxAssetBet, payAssetDecimals);
+    } catch(e){ console.warn('fillMaxBetAmount (asset):', e); }
+  } else {
+    const [, effMaxBet] = computeMaxWin(chanceBps);
+    el.value = formatAmount(effMaxBet > 0n ? effMaxBet : liveConfig.maxBet);
+  }
+}
+
 document.querySelectorAll('#manualPanel .quick button[data-op]').forEach(b=>{
-  b.addEventListener('click', ()=>{
+  b.addEventListener('click', async ()=>{
     const el = document.getElementById('betAmount');
     const v  = parseFloat(el.value || '0');
-    const chanceBps = BigInt(Math.round(parseFloat(document.getElementById('winChance').value || '0') * 100));
-    const [, effMaxBet] = computeMaxWin(chanceBps);
-    if (b.dataset.op === 'half')   el.value = (v/2).toFixed(6);
-    if (b.dataset.op === 'double') el.value = (v*2).toFixed(6);
-    if (b.dataset.op === 'max')    el.value = formatAmount(effMaxBet > 0n ? effMaxBet : liveConfig.maxBet);
+    if (b.dataset.op === 'half')   { el.value = (v/2).toFixed(6); updatePreview(); return; }
+    if (b.dataset.op === 'double') { el.value = (v*2).toFixed(6); updatePreview(); return; }
+    await fillMaxBetAmount();
     updatePreview();
   });
 });
 document.querySelectorAll('#manualPanel .quick button[data-chance]').forEach(b=>{
-  b.addEventListener('click', ()=>{
+  b.addEventListener('click', async ()=>{
     document.getElementById('winChance').value = b.dataset.chance;
     onWinChanceInput();
+    await fillMaxBetAmount();
+    updatePreview();
   });
 });
 document.getElementById('betAmount').addEventListener('input', updatePreview);
-document.getElementById('winChance').addEventListener('input', onWinChanceInput);
-document.getElementById('multiplier').addEventListener('input', onMultiplierInput);
-document.getElementById('winChanceSlider').addEventListener('input', () => {
+document.getElementById('winChance').addEventListener('input', async () => {
+  onWinChanceInput();
+  await fillMaxBetAmount();
+  updatePreview();
+});
+document.getElementById('multiplier').addEventListener('input', async () => {
+  onMultiplierInput();
+  await fillMaxBetAmount();
+  updatePreview();
+});
+document.getElementById('winChanceSlider').addEventListener('input', async () => {
   document.getElementById('winChance').value = document.getElementById('winChanceSlider').value;
   onWinChanceInput();
+  await fillMaxBetAmount();
+  updatePreview();
 });
 
 // Clickable max-bet figures (hint under Bet Amount, and the pool-cap error
@@ -1182,7 +1775,8 @@ function bindMaxFillDelegate(containerId){
   document.getElementById(containerId).addEventListener('click', (e) => {
     const target = e.target.closest('.cap[data-raw]');
     if (!target) return;
-    document.getElementById('betAmount').value = formatAmount(BigInt(target.dataset.raw));
+    const raw = BigInt(target.dataset.raw);
+    document.getElementById('betAmount').value = payAssetAddress ? ethers.formatUnits(raw, payAssetDecimals) : formatAmount(raw);
     updatePreview();
   });
 }
@@ -1217,6 +1811,7 @@ function setResultBanner(text, cls){
 function setTxLoading(on){
   document.getElementById('txLoader').classList.toggle('active', !!on);
 }
+
 async function waitForBlock(target){
   while(true){
     const bn = await provider.getBlockNumber();
@@ -1230,55 +1825,115 @@ async function waitForBlock(target){
 /// piece of UI that depends on it. Used both by a bet just placed in this
 /// same session, and by resolvePendingBet() resuming a bet from a dropped
 /// session — the two flows are identical from this point on.
-async function resolveAndFinish(betId, amount, winChanceBps, commitBlock2, placeTxHash){
+/// originAsset: null for a plain OTR bet, or { address, symbol, isNative,
+/// decimals } for an asset-origin bet - see runAssetBet/checkPendingBet for
+/// where this gets built. Needed (not just the symbol) because a winning
+/// asset-origin bet's payout now SPLITS between the origin asset (just
+/// enough to re-buy the player's original stake) and plain OTR (any profit
+/// above that) - see MultiRollDice.sol's _swapOutAndPay for why. The exact
+/// asset amount received isn't itself in any event (PayoutSwappedToAsset's
+/// otrAmount is the OTR SIDE of that swap), so it's measured via a balance
+/// snapshot taken right before resolving.
+async function resolveAndFinish(betId, amount, winChanceBps, commitBlock2, placeTxHash, originAsset){
   const nowBlock = await provider.getBlockNumber();
   if (nowBlock <= commitBlock2){
     setStatus(`Bet #${betId} placed. Waiting for block ${commitBlock2}…`, placeTxHash);
     await waitForBlock(commitBlock2);
   }
 
+  let assetBalBefore = null;
+  if (originAsset){
+    try {
+      assetBalBefore = originAsset.isNative
+        ? await provider.getBalance(userAddress)
+        : await new ethers.Contract(originAsset.address, ERC20_ABI, provider).balanceOf(userAddress);
+    } catch(e){ assetBalBefore = null; }
+  }
+
   const resolveTx   = await diceContract.resolveBet(betId);
   setStatus('Resolving…', resolveTx.hash);
   const resolveRcpt = await resolveTx.wait();
 
-  let won = false, roll = 0, paidOut = 0n, paidDirectly = true, refunded = false;
+  // Not broken out of early - an asset-origin bet's receipt can carry
+  // BetResolved/BetRefunded, PayoutSwappedToAsset, AND ProfitKeptInOtr all
+  // in the same tx (paidOut itself is always the OTR-denominated total, per
+  // MultiRollDice.sol's Bet struct - see _settlePayout).
+  let won = false, roll = 0, paidOut = 0n, paidDirectly = true, refunded = false, swappedToAsset = false, otrProfit = 0n;
   for (const log of resolveRcpt.logs){
     try {
       const p = diceContract.interface.parseLog(log);
       if (p?.name === 'BetResolved'){
         won = p.args.won; roll = Number(p.args.roll);
-        paidOut = p.args.paidOut; paidDirectly = p.args.paidDirectly; break;
+        paidOut = p.args.paidOut; paidDirectly = p.args.paidDirectly;
+      } else if (p?.name === 'BetRefunded'){
+        refunded = true;
+      } else if (p?.name === 'PayoutSwappedToAsset'){
+        swappedToAsset = true;
+      } else if (p?.name === 'ProfitKeptInOtr'){
+        otrProfit = p.args.amount;
       }
-      if (p?.name === 'BetRefunded'){ refunded = true; break; }
     } catch(e){}
   }
 
+  // How much of the origin asset actually landed - measured via balance
+  // delta (accounting for gas, if native) rather than trying to re-derive
+  // it from the swap's OTR-side event amount, so this reflects the real
+  // post-slippage amount the player actually received.
+  let assetReceived = null;
+  if (swappedToAsset && originAsset && assetBalBefore !== null){
+    try {
+      const assetBalAfter = originAsset.isNative
+        ? await provider.getBalance(userAddress)
+        : await new ethers.Contract(originAsset.address, ERC20_ABI, provider).balanceOf(userAddress);
+      let delta = assetBalAfter - assetBalBefore;
+      if (originAsset.isNative) delta += resolveRcpt.gasUsed * resolveRcpt.gasPrice;
+      if (delta > 0n) assetReceived = delta;
+    } catch(e){}
+  }
+
+  const originAssetSymbol = originAsset ? originAsset.symbol : null;
+  const assetAmountText = (assetReceived !== null)
+    ? `${fmt(ethers.formatUnits(assetReceived, originAsset.decimals), 4)} ${originAssetSymbol}`
+    : null;
+  const assetNote = swappedToAsset && originAssetSymbol
+    ? (assetAmountText ? ` (${assetAmountText})` : ` (paid in ${originAssetSymbol})`)
+    : '';
+
   if (refunded){
     setResultBanner('Bet expired — refunded', 'lose');
-    setStatus('Bet expired — full stake refunded, no fee taken.', resolveTx.hash);
+    setStatus(`Bet expired - full stake refunded${assetNote}, no fee taken.`, resolveTx.hash);
     const rec = { refunded:true, betId:betId.toString(), roll:0, target:winChanceBps, amount, payout:0n, won:false,
-                  placeTx:placeTxHash, resolveTx:resolveTx.hash };
+                  placeTx:placeTxHash, resolveTx:resolveTx.hash, originAssetSymbol: swappedToAsset ? originAssetSymbol : null,
+                  assetAmountText };
     myHistory.unshift(rec);
     renderHistory();
     await refreshBalances();
-    await refreshConfig();
+    await refreshConfig(true);
     return rec;
   }
 
   animateOdometerRoll(roll, won);
+  // A winning asset-origin bet now splits: assetAmountText (the re-bought
+  // stake) + otrProfit (kept as plain OTR) - show both when both are
+  // present, rather than just one figure that undersells what was won.
+  const winText = (won && assetAmountText && otrProfit > 0n)
+    ? `Win — ${assetAmountText} + ${fmt(formatAmount(otrProfit),2)} OTR`
+    : `Win — ${fmt(formatAmount(paidOut),2)} OTR${assetNote}`;
+
   if (won && !paidDirectly){
-    setResultBanner(`Win — ${fmt(formatAmount(paidOut),2)} OTR (claim above)`, 'win');
+    setResultBanner(`${winText} (claim above)`, 'win');
     setStatus('Payout queued — click Claim OTR in the header.', resolveTx.hash);
   } else {
-    setResultBanner(won ? `Win — ${fmt(formatAmount(paidOut),2)} OTR` : 'No win this roll', won ? 'win' : 'lose');
-    setStatus(won ? 'Payout sent to your wallet.' : 'Better luck next roll.', resolveTx.hash);
+    setResultBanner(won ? winText : 'No win this roll', won ? 'win' : 'lose');
+    setStatus(won ? `Payout sent to your wallet${assetNote}.` : 'Better luck next roll.', resolveTx.hash);
   }
   const rec = { betId:betId.toString(), roll, target:winChanceBps, amount, payout:paidOut, won,
-                placeTx:placeTxHash, resolveTx:resolveTx.hash };
+                placeTx:placeTxHash, resolveTx:resolveTx.hash, originAssetSymbol: swappedToAsset ? originAssetSymbol : null,
+                assetAmountText, otrProfit: won ? otrProfit : 0n };
   myHistory.unshift(rec);
   renderHistory();
   await refreshBalances();
-  await refreshConfig();
+  await refreshConfig(true);
   return rec;
 }
 
@@ -1306,6 +1961,72 @@ async function runOneBet(amount, winChanceBps){
   return resolveAndFinish(betId, amount, winChanceBps, commitBlock2, placeTx.hash);
 }
 
+/// Multi-asset counterpart to ensureAllowance() - approves the pay asset
+/// (not OTR) to spend from the player's wallet. Native PLS needs no
+/// approval at all, MultiRollDice.sol pulls it via msg.value.
+async function ensureAssetAllowance(assetContract, amount){
+  const allowance = await assetContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
+  if (allowance >= amount) return;
+  setStatus(`Approving ${payAssetSymbol} spend (one-time)…`);
+  const tx = await assetContract.approve(CONFIG.CONTRACT_ADDRESS, ethers.MaxUint256);
+  toast('Approval submitted…');
+  await tx.wait();
+  toast(`${payAssetSymbol} approved - you can now bet freely.`, 'success');
+}
+
+/// Multi-asset counterpart to runOneBet() - swaps assetAmount of the chosen
+/// asset into OTR via the contract's own placeBetWithAsset, then hands off
+/// to the same resolveAndFinish() tail every bet flow shares. minOtrOut is
+/// computed from a fresh live quote right before signing (see assetQuote.js)
+/// so the slippage floor reflects pool state as close to submission time as
+/// possible, not a stale value from when the preview last refreshed.
+async function runAssetBet(assetAmount, winChanceBps){
+  const asset = payAssetAddress;
+  const isNative = payAssetIsNative;
+  const symbol = payAssetSymbol;
+  const originAsset = { address: asset, symbol, isNative, decimals: payAssetDecimals };
+
+  if (!isNative) await ensureAssetAllowance(payAssetContract, assetAmount);
+
+  setResultBanner('Rolling…', 'pending');
+  setStatus('Placing bet…');
+
+  const { minOtrOut } = await AssetQuote.computeMinOtrOut(diceContractRO, asset, assetAmount);
+  const deadline = Math.floor(Date.now() / 1000) + 600;
+  const clientSeed = BigInt('0x' +
+    Array.from(crypto.getRandomValues(new Uint8Array(8)))
+      .map(b => b.toString(16).padStart(2,'0')).join(''));
+
+  // Payout-swap-back slippage is a fixed, protocol-wide contract setting
+  // now (swapSlippageBps, default 3%) rather than a per-bet parameter - see
+  // MultiRollDice.sol. Nothing to pass here for it anymore.
+  const overrides = isNative ? { value: assetAmount } : {};
+  const placeTx = await diceContract.placeBetWithAsset(
+    asset, assetAmount, winChanceBps, clientSeed, minOtrOut, deadline, overrides
+  );
+  setStatus('Submitted, confirming…', placeTx.hash);
+  const placeRcpt = await placeTx.wait();
+
+  // BetPlaced's `amount` field is the actual OTR received from the swap-in
+  // (see MultiRollDice.sol's _placeBetInternal), not the raw asset amount
+  // the player typed - that's the figure the rest of the bet lifecycle
+  // (history, resolveAndFinish) needs, matching how the contract itself
+  // accounts for the bet internally.
+  let betId, commitBlock2, otrAmount;
+  for (const log of placeRcpt.logs){
+    try {
+      const p = diceContract.interface.parseLog(log);
+      if (p?.name === 'BetPlaced'){
+        betId = p.args.betId; commitBlock2 = Number(p.args.commitBlock2); otrAmount = p.args.amount;
+        break;
+      }
+    } catch(e){}
+  }
+  if (betId === undefined) throw new Error('BetPlaced event not found in receipt');
+
+  return resolveAndFinish(betId, otrAmount, winChanceBps, commitBlock2, placeTx.hash, originAsset);
+}
+
 /* =========================================================================
    PENDING BET DETECTION & RESUME
    A bet's two steps (placeBet, resolveBet) are two separate signatures. If a
@@ -1316,8 +2037,8 @@ async function runOneBet(amount, winChanceBps){
    just see a confusing revert on their next bet attempt (BetAlreadyActive).
    ========================================================================= */
 async function checkPendingBet(){
-  if (!userAddress) return;
-  const ro = diceContractRO || new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, getFallbackProvider());
+  if (!userAddress || !CONTRACT_DEPLOYED) return;
+  const ro = getReadOnlyDice();
   try {
     const [betId, hasActive] = await ro.activeBetId(userAddress);
     if (!hasActive){
@@ -1326,12 +2047,26 @@ async function checkPendingBet(){
       return;
     }
     const bet = await ro.bets(betId);
+    // A pending bet resumed after a dropped session still needs to know its
+    // origin asset so the eventual resolveAndFinish() swap-back note is
+    // correct - see runAssetBet's parallel handling for a fresh bet.
+    let originAsset = null;
+    try {
+      const originAssetAddr = await ro.betOriginAsset(betId);
+      if (originAssetAddr && originAssetAddr !== ethers.ZeroAddress){
+        const info = supportedAssetsCache.find(a => a.address.toLowerCase() === originAssetAddr.toLowerCase());
+        originAsset = info
+          ? { address: info.address, symbol: info.symbol, isNative: info.isNative, decimals: info.decimals }
+          : { address: originAssetAddr, symbol: short(originAssetAddr), isNative: false, decimals: 18 };
+      }
+    } catch(e){}
     pendingBet = {
       betId,
       amount: bet.amount,
       winChanceBps: Number(bet.winChanceBps),
       commitBlock1: Number(bet.commitBlock1),
       commitBlock2: Number(bet.commitBlock2),
+      originAsset,
     };
     await renderPendingBetUI();
   } catch(e){ console.warn('checkPendingBet:', e); }
@@ -1376,13 +2111,13 @@ async function renderPendingBetUI(){
 
 async function resolvePendingBet(){
   if (!pendingBet) return;
-  const { betId, amount, winChanceBps, commitBlock2 } = pendingBet;
+  const { betId, amount, winChanceBps, commitBlock2, originAsset } = pendingBet;
   const btn = document.getElementById('actionBtn');
   btn.disabled = true;
   setTxLoading(true);
   setResultBanner('Rolling…', 'pending');
   try {
-    await resolveAndFinish(betId, amount, winChanceBps, commitBlock2, null);
+    await resolveAndFinish(betId, amount, winChanceBps, commitBlock2, null, originAsset);
   } catch(err){
     console.error(err);
     toast(friendlyError(err), 'error');
@@ -1400,9 +2135,22 @@ document.getElementById('actionBtn').addEventListener('click', async () => {
   if (!userAddress){ openWalletModal(); return; }
   const btn = document.getElementById('actionBtn');
   if (btn.dataset.mode === 'resolve'){ await resolvePendingBet(); return; }
-  const amount    = parseAmount(document.getElementById('betAmount').value);
   const chanceBps = Math.round(parseFloat(document.getElementById('winChance').value || '0') * 100);
-  if (amount <= 0n || chanceBps <= 0) return;
+  if (chanceBps <= 0) return;
+
+  if (payAssetAddress){
+    const assetAmount = parseAssetAmount(document.getElementById('betAmount').value);
+    if (assetAmount <= 0n) return;
+    btn.disabled = true;
+    setTxLoading(true);
+    try { await runAssetBet(assetAmount, chanceBps); }
+    catch(err){ console.error(err); toast(friendlyError(err), 'error'); setResultBanner('Something went wrong','lose'); }
+    finally { btn.disabled = false; setTxLoading(false); await checkPendingBet(); }
+    return;
+  }
+
+  const amount = parseAmount(document.getElementById('betAmount').value);
+  if (amount <= 0n) return;
   btn.disabled = true;
   setTxLoading(true);
   try { await runOneBet(amount, chanceBps); }
@@ -1428,8 +2176,24 @@ function renderHistory(){
   if (!myHistory.length){
     body.innerHTML = '<tr class="empty-row"><td colspan="8">No bets yet this session.</td></tr>'; return;
   }
+  // originAssetSymbol is only set when the payout/refund actually swapped
+  // back to the bet's origin asset (PayoutSwappedToAsset fired) - the OTR
+  // figures shown are still what the contract's Bet struct records
+  // internally (see runAssetBet's comment on BetPlaced.amount), this tag
+  // just clarifies what currency actually landed in the wallet. A winning
+  // split payout (assetAmountText + otrProfit both present) shows both
+  // halves instead of just the asset symbol, since neither figure alone
+  // tells the full story of what was received.
+  const assetTag = (r) => {
+    if (r.won && r.assetAmountText && r.otrProfit > 0n){
+      return ` <span style="color:var(--muted-2);font-size:0.65rem;">(${r.assetAmountText} + ${fmt(formatAmount(r.otrProfit),2)} OTR)</span>`;
+    }
+    if (r.assetAmountText) return ` <span style="color:var(--muted-2);font-size:0.65rem;">(${r.assetAmountText})</span>`;
+    return r.originAssetSymbol
+      ? ` <span style="color:var(--muted-2);font-size:0.65rem;">(${r.originAssetSymbol})</span>` : '';
+  };
   body.innerHTML = myHistory.slice(0,50).map(r => {
-    if (r.refunded) return `<tr><td>#${r.betId}</td><td colspan="3">${fmt(formatAmount(r.amount),2)}</td><td>0.00</td><td>0.00</td><td><span class="pill lose">REFUNDED</span></td><td><a href="${CONFIG.EXPLORER_URL}/tx/${r.resolveTx}" target="_blank" rel="noopener">tx</a></td></tr>`;
+    if (r.refunded) return `<tr><td>#${r.betId}</td><td colspan="3">${fmt(formatAmount(r.amount),2)}</td><td>0.00</td><td>0.00</td><td><span class="pill lose">REFUNDED</span>${assetTag(r)}</td><td><a href="${CONFIG.EXPLORER_URL}/tx/${r.resolveTx}" target="_blank" rel="noopener">tx</a></td></tr>`;
     const profit = r.won ? (r.payout - r.amount) : -r.amount;
     return `<tr>
       <td>#${r.betId}</td>
@@ -1438,7 +2202,7 @@ function renderHistory(){
       <td>${fmt(formatAmount(r.amount),2)}</td>
       <td>${r.won ? fmt(formatAmount(r.payout),2) : '0.00'}</td>
       ${profitCellHtml(profit)}
-      <td><span class="pill ${r.won?'win':'lose'}">${r.won?'WIN':'LOSS'}</span></td>
+      <td><span class="pill ${r.won?'win':'lose'}">${r.won?'WIN':'LOSS'}</span>${assetTag(r)}</td>
       <td><a href="${CONFIG.EXPLORER_URL}/tx/${r.resolveTx}" target="_blank" rel="noopener">tx</a></td>
     </tr>`;
   }).join('');
@@ -1476,9 +2240,13 @@ async function feedRowHtml(ro, player, betId, won, roll, paidOut, txHash){
 
 async function renderLiveFeed(){
   const body = document.getElementById('historyBody');
+  if (!CONTRACT_DEPLOYED){
+    body.innerHTML = '<tr class="empty-row"><td colspan="8">MultiRollDice is not deployed yet - no feed to show.</td></tr>';
+    return;
+  }
   body.innerHTML = '<tr class="empty-row"><td colspan="8">Loading…</td></tr>';
   try {
-    const ro   = diceContractRO || new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, getFallbackProvider());
+    const ro   = getReadOnlyDice();
     const latest = await (provider || getFallbackProvider()).getBlockNumber();
     const events = await ro.queryFilter(ro.filters.BetResolved(), Math.max(0, latest - CONFIG.FEED_BLOCK_LOOKBACK), latest);
     // queryFilter returns oldest-to-newest; take the most recent MAX_FEED_ROWS
@@ -1502,7 +2270,7 @@ async function renderLiveFeed(){
 async function prependLiveFeedRow({ player, betId, won, roll, paidOut, transactionHash }){
   if (currentHistTab !== 'feed') return;
   const body = document.getElementById('historyBody');
-  const ro = diceContractRO || new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, getFallbackProvider());
+  const ro = getReadOnlyDice();
   const html = await feedRowHtml(ro, player, betId, won, roll, paidOut, transactionHash);
 
   const placeholder = body.querySelector('.empty-row');
@@ -1577,6 +2345,7 @@ function fmt(str, dp=2){
 }
 function parseAmount(str){ try{ return ethers.parseUnits(String(str||'0'),tokenDecimals); }catch(e){return 0n;} }
 function formatAmount(bn){ try{ return ethers.formatUnits(bn,tokenDecimals); }catch(e){return '0';} }
+function parseAssetAmount(str){ try{ return ethers.parseUnits(String(str||'0'),payAssetDecimals); }catch(e){return 0n;} }
 
 function toast(msg, type){
   const c = document.getElementById('toasts');
@@ -1642,6 +2411,7 @@ document.getElementById('footerVerify').addEventListener('click', e => {
    even before a wallet is connected.
    ========================================================================= */
 function subscribeLiveBankroll(){
+  if (!CONTRACT_DEPLOYED) return;
   try {
     const ro = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, getFallbackProvider());
     ro.on('BetResolved', (betId, player, won, roll, paidOut, paidDirectly, payload) => {
@@ -1662,7 +2432,9 @@ buildOdometer();
 setOdometer(0, 'lit');
 setGauge(50);
 document.getElementById('footerContract').textContent = short(CONFIG.CONTRACT_ADDRESS);
-refreshConfig();
+loadSupportedAssetsStatic(); // populate the "Pay with" dropdown immediately - no wallet/contract needed
+loadSupportedAssets(); // then refine it with the real on-chain registry via the fallback provider - also works pre-connect
+refreshConfig(true); // deliberate first load - default Bet Amount to the max
 subscribeLiveBankroll();
 renderLiveFeed(); // Live Feed is the default tab — populate it immediately, no wallet connection needed
 </script>
