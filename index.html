@@ -1727,8 +1727,14 @@ async function fillMaxBetAmount(){
       el.value = ethers.formatUnits(maxAssetBet, payAssetDecimals);
     } catch(e){ console.warn('fillMaxBetAmount (asset):', e); }
   } else {
+    // effMaxBet is genuinely 0 whenever currentPayoutCap() is 0 (pool below
+    // its funded floor, e.g. before any bankroll has been deposited) - it
+    // used to fall back to the raw maxBet ceiling in that case, which
+    // silently showed a fully unbettable amount as if it were biddable.
+    // Show 0 instead, matching what a real placeBet() would actually do
+    // (revert with PoolBelowFloor) rather than a misleading number.
     const [, effMaxBet] = computeMaxWin(chanceBps);
-    el.value = formatAmount(effMaxBet > 0n ? effMaxBet : liveConfig.maxBet);
+    el.value = formatAmount(effMaxBet);
   }
 }
 
