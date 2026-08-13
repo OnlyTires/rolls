@@ -570,7 +570,7 @@
           <div class="quick">
             <button data-op="half">½</button>
             <button data-op="double">2×</button>
-            <button data-op="max">Max</button>
+            <button data-op="max" style="display:none;" title="Fill your actual wallet balance - shown only when it's less than the pool's max bet">Max</button>
           </div>
           <div class="bet-max-hint" id="betMaxHint">Max bet at this chance: —</div>
         </div>
@@ -594,8 +594,8 @@
 
         <div class="preview">
           <div class="cell"><div class="k">Multiplier</div><div class="v brass" id="pvMult">1.9800×</div></div>
-          <div class="cell"><div class="k">Payout on win</div><div class="v" id="pvPayout">—</div></div>
-          <div class="cell"><div class="k">Profit on win</div><div class="v" id="pvProfit">—</div></div>
+          <div class="cell"><div class="k">Payout on win</div><div class="v" id="pvPayout">—</div><div class="sub" id="pvPayoutUsd"></div></div>
+          <div class="cell"><div class="k">Profit on win</div><div class="v" id="pvProfit">—</div><div class="sub" id="pvProfitUsd"></div></div>
           <div class="cell"><div class="k">Roll under to win</div><div class="v brass" id="pvChance">50.00</div></div>
           <!-- Total payout — bet amount + profit, live as bet amount is typed -->
           <div class="max-win-cell">
@@ -603,7 +603,10 @@
               <div class="k">Total payout if you win</div>
               <div class="sub" id="pvMaxBetSub">— OTR max bet</div>
             </div>
-            <div class="v win" id="pvMaxWin">—</div>
+            <div>
+              <div class="v win" id="pvMaxWin">—</div>
+              <div class="sub" id="pvMaxWinUsd" style="text-align:right;"></div>
+            </div>
           </div>
         </div>
 
@@ -961,6 +964,13 @@ const CONFIG = {
   WPLS_ADDRESS:     '0xA1077a294dDE1B09bB078844df40758a5D0f9a27',
   POLL_MS:          1000, // block-detection poll interval — PulseChain blocks land ~every 10s, so this reacts quickly without hammering the RPC
   FEED_BLOCK_LOOKBACK: 20000,
+  // Reference stablecoin used purely for the small-print "≈$X" figures next
+  // to OTR/asset payout numbers - eUSDC, one of the curated registered
+  // assets, already has a real deep WPLS pool this contract routes through
+  // (see curatedLaunchAssets.js), so quoting against it costs nothing extra
+  // to trust beyond what the game already relies on.
+  USD_REFERENCE_ASSET:    '0x15D38573d2feeb82e7ad5187aB8c1D52810B1f07', // eUSDC
+  USD_REFERENCE_DECIMALS: 6,
 };
 
 // Every function that talks to the game contract before a wallet connects
@@ -1088,6 +1098,16 @@ let payAssetSymbol = 'OTR';
 let payAssetDecimals = 18;
 let payAssetContract = null; // ERC20 contract instance; null for native PLS or plain OTR
 let supportedAssetsCache = []; // [{ address, isNative, symbol }]
+
+// Last-known raw balances (OTR, and the currently-selected pay asset if
+// any) - kept updated by refreshBalances(), read by the dynamic "Max"
+// button's show/hide logic (updateMaxBalanceButtonVisibility) so it doesn't
+// need its own extra balance fetch every time odds/asset change.
+let otrBalanceRaw = 0n;
+let payAssetBalanceRaw = 0n;
+// Most recently computed pool-derived max bet (from fillMaxBetAmount) - the
+// dynamic Max button compares the wallet's actual balance against this.
+let lastKnownPoolMaxBet = 0n;
 
 // Token icon URLs, keyed by lowercased address - '' means "checked, no icon
 // found" (distinct from undefined = "not checked yet"), so a failed/empty
@@ -1325,6 +1345,7 @@ async function refreshBalances(){
     const fmtBal = fmt(formatAmount(bal), 2);
     document.getElementById('headerOtrBal').textContent = fmtBal;
     document.getElementById('panelOtrBal').textContent  = fmtBal + ' ' + tokenSymbol;
+    otrBalanceRaw = bal;
 
     // Pending pull-payment claim chip
     if (pending > 0n){
@@ -1339,8 +1360,26 @@ async function refreshBalances(){
         ? await provider.getBalance(userAddress)
         : await payAssetContract.balanceOf(userAddress);
       document.getElementById('panelPayAssetBal').textContent = fmt(ethers.formatUnits(payBal, payAssetDecimals), 4) + ' ' + payAssetSymbol;
+      payAssetBalanceRaw = payBal;
     }
+    updateMaxBalanceButtonVisibility();
   } catch(e){ console.warn('refreshBalances:', e); }
+}
+
+/// Shows the "Max" quick button only when the connected wallet's actual
+/// balance (OTR, or the selected pay asset) is BELOW the pool-derived max
+/// bet - i.e. only when the wallet balance, not the pool cap, is what's
+/// actually limiting the player. When the wallet holds enough to cover the
+/// full pool max, fillMaxBetAmount() already auto-fills that ceiling on
+/// every odds/asset change, so a separate Max button would be redundant;
+/// worse, if it kept filling the pool ceiling regardless of balance, a
+/// player short on funds would get a number their wallet can't cover.
+function updateMaxBalanceButtonVisibility(){
+  const btn = document.querySelector('#manualPanel .quick button[data-op="max"]');
+  if (!btn) return;
+  if (!userAddress){ btn.style.display = 'none'; return; }
+  const balance = payAssetAddress ? payAssetBalanceRaw : otrBalanceRaw;
+  btn.style.display = (balance < lastKnownPoolMaxBet) ? '' : 'none';
 }
 
 /* =========================================================================
@@ -1615,6 +1654,41 @@ function getReadOnlyDice(){
   return diceContractRO || new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, getFallbackProvider());
 }
 
+/// Small-print "≈$X.XX" helper - quotes an OTR amount against the
+/// configured USD reference stablecoin (see CONFIG.USD_REFERENCE_ASSET) via
+/// the contract's own quoteOtrToAssetOut, same real-pool-quote mechanism
+/// every other figure on this page uses (no separate price feed/oracle).
+/// Best-effort: returns '' (never throws) on any failure, so a momentarily
+/// broken quote just omits the small print rather than breaking the preview.
+async function usdApprox(roDice, otrAmount){
+  if (!roDice || otrAmount <= 0n) return '';
+  try {
+    const usd = await roDice.quoteOtrToAssetOut(CONFIG.USD_REFERENCE_ASSET, otrAmount);
+    return '≈$' + fmt(ethers.formatUnits(usd, CONFIG.USD_REFERENCE_DECIMALS), 2);
+  } catch(e){ return ''; }
+}
+
+// Fire-and-forget small-print updater for the OTR-direct preview cells -
+// updatePreview() itself is synchronous (called on every keystroke), so
+// this runs the USD quotes separately rather than making the whole preview
+// path async. usdPreviewToken guards against a slow older call overwriting
+// a newer one's result once both resolve out of order.
+let usdPreviewToken = 0;
+function fillUsdSmallPrint(payoutOtr, profitOtr, maxWinOtr){
+  const myToken = ++usdPreviewToken;
+  const roDice = getReadOnlyDice();
+  Promise.all([
+    usdApprox(roDice, payoutOtr),
+    usdApprox(roDice, profitOtr),
+    usdApprox(roDice, maxWinOtr),
+  ]).then(([payoutUsd, profitUsd, maxWinUsd]) => {
+    if (myToken !== usdPreviewToken) return;
+    document.getElementById('pvPayoutUsd').textContent = payoutUsd;
+    document.getElementById('pvProfitUsd').textContent = profitUsd;
+    document.getElementById('pvMaxWinUsd').textContent = maxWinUsd;
+  });
+}
+
 // autoFillMax: only true at genuinely deliberate moments (first load, wallet
 // connect, right after one of the player's own bets resolves) - NOT on the
 // periodic 20s poll or the global BetResolved/BankrollDeposited event
@@ -1753,8 +1827,11 @@ function updatePreview(){
   if (chanceBps <= 0n || amount <= 0n){
     document.getElementById('pvPayout').textContent = '—';
     document.getElementById('pvProfit').textContent = '—';
+    document.getElementById('pvPayoutUsd').textContent = '';
+    document.getElementById('pvProfitUsd').textContent = '';
     // Nothing typed yet — show the theoretical ceiling instead of a live payout.
     document.getElementById('pvMaxWin').textContent = maxWin > 0n ? fmt(formatAmount(maxWin), 2) + ' OTR' : '—';
+    document.getElementById('pvMaxWinUsd').textContent = '';
     return;
   }
   const edge   = BigInt(liveConfig.houseEdgeBps || 100);
@@ -1765,6 +1842,7 @@ function updatePreview(){
   // Live total payout (bet amount + profit) for the entered bet — tracks
   // betAmount as it's typed, instead of sitting frozen at the tier ceiling.
   document.getElementById('pvMaxWin').textContent = fmt(formatAmount(payout), 2) + ' OTR';
+  fillUsdSmallPrint(payout, profit, payout);
 
   if (chanceBps < BigInt(liveConfig.minChanceBps) || chanceBps > BigInt(liveConfig.maxChanceBps)){
     errEl.textContent = `Roll under to win must be ${(liveConfig.minChanceBps/100).toFixed(2)}–${(liveConfig.maxChanceBps/100).toFixed(2)}.`;
@@ -1805,6 +1883,9 @@ async function runAssetPreview(amountStr, chanceBps){
     document.getElementById('pvPayout').textContent  = '—';
     document.getElementById('pvProfit').textContent  = '—';
     document.getElementById('pvMaxWin').textContent  = '—';
+    document.getElementById('pvPayoutUsd').textContent = '';
+    document.getElementById('pvProfitUsd').textContent = '';
+    document.getElementById('pvMaxWinUsd').textContent = '';
     return;
   }
 
@@ -1831,27 +1912,32 @@ async function runAssetPreview(amountStr, chanceBps){
       document.getElementById('pvPayout').textContent = '—';
       document.getElementById('pvProfit').textContent = '—';
       document.getElementById('pvMaxWin').textContent = '—';
+      document.getElementById('pvPayoutUsd').textContent = '';
+      document.getElementById('pvProfitUsd').textContent = '';
+      document.getElementById('pvMaxWinUsd').textContent = '';
       return;
     }
 
     const quote = await AssetQuote.quoteAssetBet(roDice, asset, amount, chanceBps);
     if (myToken !== assetPreviewToken) return;
 
-    // Show payout/profit in the bet's own asset (what actually lands in the
-    // wallet on a win, post auto-swap-back), not the internal OTR amount -
-    // falls back to OTR only if the payout-direction quote itself failed
-    // (e.g. a momentarily broken reverse route), so the preview still shows
-    // something useful rather than going blank.
-    if (quote.payoutAsset !== null){
-      document.getElementById('pvPayout').textContent = fmt(ethers.formatUnits(quote.payoutAsset, payAssetDecimals), 4) + ' ' + payAssetSymbol;
-      document.getElementById('pvProfit').textContent = fmt(ethers.formatUnits(quote.profitAsset, payAssetDecimals), 4) + ' ' + payAssetSymbol;
-      document.getElementById('pvMaxWin').textContent = fmt(ethers.formatUnits(quote.payoutAsset, payAssetDecimals), 4) + ' ' + payAssetSymbol;
-    } else {
-      const profit = quote.payout - quote.expectedOtr;
-      document.getElementById('pvPayout').textContent = fmt(formatAmount(quote.payout), 2) + ' OTR';
-      document.getElementById('pvProfit').textContent = fmt(formatAmount(profit), 2) + ' OTR';
-      document.getElementById('pvMaxWin').textContent = fmt(formatAmount(quote.payout), 2) + ' OTR';
-    }
+    // A win now SPLITS: MultiRollDice.sol only re-buys the player's original
+    // stake in the origin asset - any profit above that pays out as plain
+    // OTR instead of also being swapped (see _swapOutAndPay). The asset
+    // portion returned is exactly the stake (`amount`, what's being typed
+    // right now); the OTR profit portion is the total payout minus what
+    // that stake originally converted to (quote.expectedOtr) - the best
+    // approximation available client-side, since the contract's own
+    // resolution-time reverse-quote isn't exposed as a public view. Real
+    // execution will differ slightly with price movement between now and
+    // resolution, same caveat as every other live-quoted figure here.
+    const assetStakeText = fmt(ethers.formatUnits(amount, payAssetDecimals), 4) + ' ' + payAssetSymbol;
+    const otrProfit = quote.payout > quote.expectedOtr ? quote.payout - quote.expectedOtr : 0n;
+    const otrProfitText = fmt(formatAmount(otrProfit), 2) + ' OTR';
+    document.getElementById('pvPayout').textContent = assetStakeText + ' + ' + otrProfitText;
+    document.getElementById('pvProfit').textContent = otrProfitText; // the asset side is a wash (stake back only) - all profit is the OTR portion
+    document.getElementById('pvMaxWin').textContent = assetStakeText + ' + ' + otrProfitText;
+    fillUsdSmallPrint(quote.expectedOtr + otrProfit, otrProfit, quote.expectedOtr + otrProfit);
 
     if (quote.exceedsCap){
       errEl.innerHTML = `Payout would exceed the pool cap. Max bet at this chance: ` +
@@ -1886,6 +1972,7 @@ async function fillMaxBetAmount(){
     try {
       const maxAssetBet = await AssetQuote.computeMaxBetInAsset(roDice, payAssetAddress, chanceBps);
       el.value = ethers.formatUnits(maxAssetBet, payAssetDecimals);
+      lastKnownPoolMaxBet = maxAssetBet;
     } catch(e){ console.warn('fillMaxBetAmount (asset):', e); }
   } else {
     // effMaxBet is genuinely 0 whenever currentPayoutCap() is 0 (pool below
@@ -1896,7 +1983,9 @@ async function fillMaxBetAmount(){
     // (revert with PoolBelowFloor) rather than a misleading number.
     const [, effMaxBet] = computeMaxWin(chanceBps);
     el.value = formatAmount(effMaxBet);
+    lastKnownPoolMaxBet = effMaxBet;
   }
+  updateMaxBalanceButtonVisibility();
 }
 
 document.querySelectorAll('#manualPanel .quick button[data-op]').forEach(b=>{
@@ -1905,7 +1994,13 @@ document.querySelectorAll('#manualPanel .quick button[data-op]').forEach(b=>{
     const v  = parseFloat(el.value || '0');
     if (b.dataset.op === 'half')   { el.value = (v/2).toFixed(6); updatePreview(); return; }
     if (b.dataset.op === 'double') { el.value = (v*2).toFixed(6); updatePreview(); return; }
-    await fillMaxBetAmount();
+    // 'max' only shows when the wallet's actual balance is BELOW the pool
+    // max (updateMaxBalanceButtonVisibility) - fills that real balance, not
+    // the pool ceiling (fillMaxBetAmount already auto-fills the ceiling on
+    // every odds/asset change, so this button existing at all means the
+    // ceiling isn't what the player can actually afford).
+    const balance = payAssetAddress ? payAssetBalanceRaw : otrBalanceRaw;
+    el.value = payAssetAddress ? ethers.formatUnits(balance, payAssetDecimals) : formatAmount(balance);
     updatePreview();
   });
 });
