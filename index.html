@@ -569,8 +569,6 @@
           <input type="number" id="betAmount" value="10" min="0" step="any" />
           <input type="range" id="betAmountSlider" class="chance-slider" min="0" max="10" step="any" value="10" />
           <div class="quick">
-            <button data-op="half">½</button>
-            <button data-op="double">2×</button>
             <button data-op="max" style="display:none;" title="Fill your actual wallet balance - shown only when it's less than the pool's max bet">Max</button>
           </div>
           <div class="bet-max-hint" id="betMaxHint">Max bet at this chance: —</div>
@@ -1832,7 +1830,7 @@ function updatePreview(){
       fmt(formatAmount(effMaxBet), 2) + ' OTR max bet at ' + chancePct.toFixed(2) + '% win chance';
     betMaxHint.innerHTML =
       `Max bet at this chance: <span class="cap" id="betMaxFill" data-raw="${effMaxBet.toString()}" title="Click to fill this amount">${fmt(formatAmount(effMaxBet),2)} OTR</span> ` +
-      `— every roll is capped at a max payout of ${fmt(formatAmount(exposureCap),0)} OTR, so bigger multipliers allow smaller bets.`;
+      `— every roll is capped at a max payout of ${fmt(formatAmount(exposureCap),0)} OTR.`;
   } else {
     document.getElementById('pvMaxBetSub').textContent = '—';
     betMaxHint.textContent = 'Max bet at this chance: —';
@@ -2011,14 +2009,11 @@ async function fillMaxBetAmount(){
 }
 
 document.querySelectorAll('#manualPanel .quick button[data-op]').forEach(b=>{
-  b.addEventListener('click', async ()=>{
+  b.addEventListener('click', ()=>{
     const el = document.getElementById('betAmount');
-    const v  = parseFloat(el.value || '0');
-    if (b.dataset.op === 'half')   { el.value = (v/2).toFixed(6); updatePreview(); return; }
-    if (b.dataset.op === 'double') { el.value = (v*2).toFixed(6); updatePreview(); return; }
-    // 'max' only shows when the wallet's actual balance is BELOW the pool
-    // max (updateMaxBalanceButtonVisibility) - fills that real balance, not
-    // the pool ceiling.
+    // Only the 'max' button remains here - shows only when the wallet's
+    // actual balance is BELOW the pool max (updateMaxBalanceButtonVisibility)
+    // - fills that real balance, not the pool ceiling.
     const balance = payAssetAddress ? payAssetBalanceRaw : otrBalanceRaw;
     el.value = payAssetAddress ? ethers.formatUnits(balance, payAssetDecimals) : formatAmount(balance);
     updatePreview();
