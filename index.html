@@ -576,17 +576,17 @@
         </div>
         <div class="pair-row">
           <div class="field">
-            <label>Roll under to win <span class="hint">1.00–95.00</span></label>
-            <input type="number" id="winChance" value="50" min="1" max="95" step="0.01" />
+            <label>Roll under to win <span class="hint">5.00–95.00</span></label>
+            <input type="number" id="winChance" value="50" min="5" max="95" step="0.01" />
           </div>
           <div class="field">
             <label>Multiplier <span class="hint">← linked</span></label>
             <input type="number" id="multiplier" value="1.9800" min="0" step="any" />
           </div>
         </div>
-        <input type="range" id="winChanceSlider" class="chance-slider" min="1" max="95" step="0.01" value="50" />
+        <input type="range" id="winChanceSlider" class="chance-slider" min="5" max="95" step="0.01" value="50" />
         <div class="quick">
-          <button data-chance="2">2% win</button>
+          <button data-chance="5">5% win</button>
           <button data-chance="10">10% win</button>
           <button data-chance="50">50% win</button>
           <button data-chance="90">90% win</button>
@@ -1085,7 +1085,7 @@ let diceContract, diceContractRO, tokenContract;
 let tokenDecimals = 18, tokenSymbol = 'OTR';
 let currentHistTab = 'feed';
 let myHistory = [];
-let liveConfig = { minBet:0n, maxBet:0n, houseEdgeBps:100, minChanceBps:100, maxChanceBps:9500, currentPayoutCap:0n, freeBankroll:0n };
+let liveConfig = { minBet:0n, maxBet:0n, houseEdgeBps:100, minChanceBps:500, maxChanceBps:9500, currentPayoutCap:0n, freeBankroll:0n };
 
 // ── Multi-asset "pay with" state ──
 // payAssetAddress: null means "plain OTR" (the original placeBet path).
