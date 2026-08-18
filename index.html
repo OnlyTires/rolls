@@ -549,7 +549,7 @@
       <!-- MANUAL MODE -->
       <div id="manualPanel">
         <div class="field">
-          <label>Pay with</label>
+          <label>Bet with</label>
           <!-- Native <select><option> can't render an <img> inside an option
                in any browser, so the asset picker is a small custom
                listbox instead, styled to match the wallet modal's own
@@ -565,7 +565,7 @@
           </div>
         </div>
         <div class="field">
-          <label>Bet amount <span class="hint" id="tokenSymLabel">OTR</span></label>
+          <label><span>Bet amount <span class="hint" id="betAmountUsd"></span></span> <span class="hint" id="tokenSymLabel">OTR</span></label>
           <input type="number" id="betAmount" value="10" min="0" step="any" />
           <input type="range" id="betAmountSlider" class="chance-slider" min="0" max="10" step="any" value="10" />
           <div class="quick">
@@ -1684,6 +1684,24 @@ async function fillBetMaxUsd(otrAmount){
   if (el) el.textContent = usd;
 }
 
+// Same idea as fillBetMaxUsd, but for whatever's actually typed in the Bet
+// Amount box right now (OTR-equivalent, so asset-mode callers pass the
+// swap-in quote's expectedOtr rather than the raw asset amount). Cleared
+// whenever there's nothing valid to quote.
+let betAmountUsdToken = 0;
+async function fillBetAmountUsd(otrAmount){
+  const myToken = ++betAmountUsdToken;
+  const el = document.getElementById('betAmountUsd');
+  if (!otrAmount || otrAmount <= 0n){
+    if (el) el.textContent = '';
+    return;
+  }
+  const roDice = getReadOnlyDice();
+  const usd = await usdApprox(roDice, otrAmount);
+  if (myToken !== betAmountUsdToken) return;
+  if (el) el.textContent = usd;
+}
+
 // Fire-and-forget small-print updater for the OTR-direct preview cells -
 // updatePreview() itself is synchronous (called on every keystroke), so
 // this runs the USD quotes separately rather than making the whole preview
@@ -1832,6 +1850,7 @@ function updatePreview(){
   const amount    = parseAmount(amountStr);
   const errEl     = document.getElementById('manualError');
   errEl.textContent = '';
+  fillBetAmountUsd(amount); // OTR-direct: the typed amount IS the OTR amount
 
   const [maxWin, effMaxBet, exposureCap] = computeMaxWin(chanceBps);
   // The slider's ceiling tracks the live max-for-this-chance on every odds
@@ -1916,6 +1935,7 @@ async function runAssetPreview(amountStr, chanceBps){
     document.getElementById('pvPayoutUsd').textContent = '';
     document.getElementById('pvProfitUsd').textContent = '';
     document.getElementById('pvMaxWinUsd').textContent = '';
+    fillBetAmountUsd(0n);
     return;
   }
 
@@ -1955,11 +1975,18 @@ async function runAssetPreview(amountStr, chanceBps){
       document.getElementById('pvPayoutUsd').textContent = '';
       document.getElementById('pvProfitUsd').textContent = '';
       document.getElementById('pvMaxWinUsd').textContent = '';
+      fillBetAmountUsd(0n);
       return;
     }
 
     const quote = await AssetQuote.quoteAssetBet(roDice, asset, amount, chanceBps);
     if (myToken !== assetPreviewToken) return;
+    // Asset-denominated stake -> USD goes through its own OTR-equivalent
+    // (quote.expectedOtr, the same swap-in quote already used for the
+    // payout/profit math below), not a second direct asset->USD quote -
+    // keeps every USD figure on the page derived through the one OTR->USD
+    // hub (usdApprox/quoteOtrToAssetOut).
+    fillBetAmountUsd(quote.expectedOtr);
 
     // A win now SPLITS: MultiRollDice.sol only re-buys the player's original
     // stake in the origin asset - any profit above that pays out as plain
