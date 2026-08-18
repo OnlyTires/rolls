@@ -1668,6 +1668,22 @@ async function usdApprox(roDice, otrAmount){
   } catch(e){ return ''; }
 }
 
+// Fire-and-forget USD small-print for the "Max bet at this chance" hint -
+// separate token from usdPreviewToken since it's driven by odds changes
+// (updatePreview/runAssetPreview), not the payout/profit/maxWin trio.
+// otrAmount is always the OTR-equivalent of the max bet even in asset mode
+// (runAssetPreview passes AssetQuote.maxOtrBetForWinChance's result), so a
+// single helper covers both paths.
+let betMaxUsdToken = 0;
+async function fillBetMaxUsd(otrAmount){
+  const myToken = ++betMaxUsdToken;
+  const roDice = getReadOnlyDice();
+  const usd = await usdApprox(roDice, otrAmount);
+  if (myToken !== betMaxUsdToken) return;
+  const el = document.getElementById('betMaxHintUsd');
+  if (el) el.textContent = usd;
+}
+
 // Fire-and-forget small-print updater for the OTR-direct preview cells -
 // updatePreview() itself is synchronous (called on every keystroke), so
 // this runs the USD quotes separately rather than making the whole preview
@@ -1830,7 +1846,9 @@ function updatePreview(){
       fmt(formatAmount(effMaxBet), 2) + ' OTR max bet at ' + chancePct.toFixed(2) + '% win chance';
     betMaxHint.innerHTML =
       `Max bet at this chance: <span class="cap" id="betMaxFill" data-raw="${effMaxBet.toString()}" title="Click to fill this amount">${fmt(formatAmount(effMaxBet),2)} OTR</span> ` +
+      `<span id="betMaxHintUsd"></span> ` +
       `— every roll is capped at a max payout of ${fmt(formatAmount(exposureCap),0)} OTR.`;
+    fillBetMaxUsd(effMaxBet);
   } else {
     document.getElementById('pvMaxBetSub').textContent = '—';
     betMaxHint.textContent = 'Max bet at this chance: —';
@@ -1921,7 +1939,13 @@ async function runAssetPreview(amountStr, chanceBps){
     // path's equivalent line for the fuller explanation, which still applies
     // there since that's the asset being bet directly).
     document.getElementById('betMaxHint').innerHTML =
-      `Max bet at this chance: <span class="cap" id="betMaxFill" data-raw="${maxAssetBet.toString()}" title="Click to fill this amount">${fmt(ethers.formatUnits(maxAssetBet, payAssetDecimals),4)} ${payAssetSymbol}</span>`;
+      `Max bet at this chance: <span class="cap" id="betMaxFill" data-raw="${maxAssetBet.toString()}" title="Click to fill this amount">${fmt(ethers.formatUnits(maxAssetBet, payAssetDecimals),4)} ${payAssetSymbol}</span> ` +
+      `<span id="betMaxHintUsd"></span>`;
+    // maxAssetBet is asset-denominated - re-derive its OTR-equivalent ceiling
+    // (same call computeMaxBetInAsset already made internally) so the USD
+    // quote goes through the same OTR->USD path used everywhere else on the
+    // page, rather than a second asset->USD conversion.
+    AssetQuote.maxOtrBetForWinChance(roDice, chanceBps).then(fillBetMaxUsd).catch(()=>{});
 
     const amount = parseAssetAmount(amountStr);
     if (amount <= 0n){
