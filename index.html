@@ -264,6 +264,14 @@
     text-transform:uppercase;font-size:0.78rem;
   }
   .tab-btn.active{background:rgba(227,169,74,0.1);border-color:var(--brass-dim);color:var(--brass);}
+  .feed-load-more{display:flex;justify-content:center;margin-top:12px;}
+  .feed-load-more-btn{
+    background:transparent;border:1px solid var(--line);color:var(--muted);
+    padding:9px 18px;border-radius:8px;cursor:pointer;font-weight:600;letter-spacing:0.06em;
+    text-transform:uppercase;font-size:0.72rem;
+  }
+  .feed-load-more-btn:hover:not(:disabled){border-color:var(--brass-dim);color:var(--brass);}
+  .feed-load-more-btn:disabled{opacity:0.5;cursor:not-allowed;}
   .field{margin-bottom:14px;}
   .field label{display:flex;justify-content:space-between;font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;}
   .field label .hint{color:var(--muted-2);text-transform:none;letter-spacing:0;}
@@ -649,6 +657,9 @@
           <tr class="empty-row"><td colspan="8">Connect your wallet to see your bet history.</td></tr>
         </tbody>
       </table>
+    </div>
+    <div class="feed-load-more" id="feedLoadMoreWrap" style="display:none;">
+      <button type="button" id="feedLoadMoreBtn" class="feed-load-more-btn">Load older bets</button>
     </div>
   </section>
 
@@ -2673,7 +2684,19 @@ function renderHistory(){
   myHistory.slice(0,50).forEach(r => fetchAssetCellIcon(r.originAssetAddress, r.originAssetIsNative));
 }
 
-const MAX_FEED_ROWS = 50;
+const FEED_BATCH_SIZE = 20;
+
+// Live Feed pagination state - see loadOlderFeedRows(). The feed starts in
+// "live" mode: passively trimmed to FEED_BATCH_SIZE rows as new bets arrive
+// (existing prependLiveFeedRow behavior). The moment the user clicks "Load
+// older" even once, feedManuallyExpanded flips permanently true for the rest
+// of this render cycle - after that, new live bets still prepend at the top,
+// but the older rows the user explicitly asked to see are never auto-pruned
+// out from under them.
+let feedOldestLoadedBlock = null; // one below this is where the next "Load older" search starts
+let feedReachedGenesis = false;   // true once a backward search has hit block 0 - nothing older exists
+let feedManuallyExpanded = false;
+let feedLoadOlderInFlight = false;
 
 /// The Live Feed only has BetResolved's on-event data (betId, player, won,
 /// roll, paidOut) — it doesn't include the original win-chance target or bet
@@ -2733,42 +2756,121 @@ async function feedRowHtml(ro, player, betId, won, roll, paidOut){
 /// with sparse early betting) no longer means "No recent bets yet" once the
 /// most recent bet scrolls outside a fixed recent-blocks cutoff; the search
 /// just keeps reaching further back until it finds them.
+/// Returns { events, oldestBlockSearched, reachedGenesis } - not just the
+/// events array - so a caller doing pagination (see loadOlderFeedRows) knows
+/// exactly where this search left off (oldestBlockSearched - 1 is where the
+/// next, older search should start) and whether it stopped because it
+/// genuinely hit block 0 (reachedGenesis - nothing older can possibly exist)
+/// versus just having exhausted this call's own MAX_CHUNKS budget without
+/// finding targetCount events yet (a real possibility for a very sparse,
+/// deep stretch of history spanning more than MAX_CHUNKS*CHUNK blocks) -
+/// only the former should ever disable/hide a "Load older" button.
 async function findRecentBetEvents(ro, latest, targetCount){
   const CHUNK = CONFIG.FEED_BLOCK_LOOKBACK; // keeps each eth_getLogs call bounded, RPC-provider-safe
   const MAX_CHUNKS = 50; // up to 50 * CHUNK blocks back - generous without ever being a truly unbounded scan
   let toBlock = latest;
   let collected = [];
+  let lastFromBlock = latest;
+  let reachedGenesis = false;
   for (let i = 0; i < MAX_CHUNKS && toBlock >= 0; i++){
     const fromBlock = Math.max(0, toBlock - CHUNK + 1);
     const events = await ro.queryFilter(ro.filters.BetResolved(), fromBlock, toBlock);
     collected = events.concat(collected); // preserve oldest-to-newest order across chunks
-    if (collected.length >= targetCount || fromBlock === 0) break;
+    lastFromBlock = fromBlock;
+    if (fromBlock === 0){ reachedGenesis = true; break; }
+    if (collected.length >= targetCount) break;
     toBlock = fromBlock - 1;
   }
-  return collected;
+  return { events: collected, oldestBlockSearched: lastFromBlock, reachedGenesis };
+}
+
+/// Shows/hides/relabels the "Load older" button for the current feed state.
+/// Only ever visible on the feed tab with a real, non-empty, non-exhausted
+/// feed - hidden entirely once reachedGenesis (nothing older to load) or
+/// whenever there's no feed to page through at all.
+function updateFeedLoadMoreUI(){
+  const wrap = document.getElementById('feedLoadMoreWrap');
+  const btn  = document.getElementById('feedLoadMoreBtn');
+  if (currentHistTab !== 'feed' || feedOldestLoadedBlock === null || feedReachedGenesis){
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = '';
+  btn.disabled = feedLoadOlderInFlight;
+  btn.textContent = feedLoadOlderInFlight ? 'Loading…' : 'Load older bets';
 }
 
 async function renderLiveFeed(){
   const body = document.getElementById('historyBody');
+  // Fresh render from scratch (initial load, or switching back to this tab)
+  // - reset all pagination state so a stale cursor/expanded-mode flag from a
+  // previous visit never leaks into this one.
+  feedOldestLoadedBlock = null;
+  feedReachedGenesis = false;
+  feedManuallyExpanded = false;
+  feedLoadOlderInFlight = false;
   if (!CONTRACT_DEPLOYED){
     body.innerHTML = '<tr class="empty-row"><td colspan="8">MultiRollDice is not deployed yet - no feed to show.</td></tr>';
+    updateFeedLoadMoreUI();
     return;
   }
   body.innerHTML = '<tr class="empty-row"><td colspan="8">Loading…</td></tr>';
   try {
     const ro   = getReadOnlyDice();
     const latest = await (provider || getFallbackProvider()).getBlockNumber();
-    const events = await findRecentBetEvents(ro, latest, MAX_FEED_ROWS);
-    // events is oldest-to-newest; take the most recent MAX_FEED_ROWS then
+    const { events, oldestBlockSearched, reachedGenesis } = await findRecentBetEvents(ro, latest, FEED_BATCH_SIZE);
+    // events is oldest-to-newest; take the most recent FEED_BATCH_SIZE then
     // reverse so the newest lands first — order, not the (now-hidden) bet
     // ID, is what keeps "most recent on top" true.
-    const recent = events.slice(-MAX_FEED_ROWS).reverse();
-    if (!recent.length){ body.innerHTML = '<tr class="empty-row"><td colspan="8">No bets yet.</td></tr>'; return; }
+    const recent = events.slice(-FEED_BATCH_SIZE).reverse();
+    feedOldestLoadedBlock = oldestBlockSearched;
+    feedReachedGenesis = reachedGenesis;
+    if (!recent.length){
+      body.innerHTML = '<tr class="empty-row"><td colspan="8">No bets yet.</td></tr>';
+      updateFeedLoadMoreUI();
+      return;
+    }
     const rows = await Promise.all(recent.map((ev) =>
       feedRowHtml(ro, ev.args.player, ev.args.betId, ev.args.won, ev.args.roll, ev.args.paidOut)
     ));
     body.innerHTML = rows.join('');
-  } catch(e){ body.innerHTML = '<tr class="empty-row"><td colspan="8">Could not load feed.</td></tr>'; }
+    updateFeedLoadMoreUI();
+  } catch(e){
+    body.innerHTML = '<tr class="empty-row"><td colspan="8">Could not load feed.</td></tr>';
+    updateFeedLoadMoreUI();
+  }
+}
+
+/// Appends the next FEED_BATCH_SIZE older rows to the bottom of the table,
+/// picking up exactly where the last search (initial load or a previous
+/// "Load older" click) left off. On-demand only - never called automatically
+/// - so browsing deep history is something the user opts into per click,
+/// not something that silently burns RPC calls in the background.
+async function loadOlderFeedRows(){
+  if (feedLoadOlderInFlight || feedReachedGenesis || feedOldestLoadedBlock === null) return;
+  feedLoadOlderInFlight = true;
+  updateFeedLoadMoreUI();
+  try {
+    const ro = getReadOnlyDice();
+    const { events, oldestBlockSearched, reachedGenesis } = await findRecentBetEvents(ro, feedOldestLoadedBlock - 1, FEED_BATCH_SIZE);
+    feedOldestLoadedBlock = oldestBlockSearched;
+    feedReachedGenesis = reachedGenesis;
+    feedManuallyExpanded = true; // from here on, live prepends should stop auto-trimming this list
+    if (events.length){
+      // Oldest-to-newest within this older batch - reverse so, appended
+      // after the existing (newer) rows, the whole table stays newest-to-
+      // oldest top-to-bottom.
+      const rows = await Promise.all(events.slice().reverse().map((ev) =>
+        feedRowHtml(ro, ev.args.player, ev.args.betId, ev.args.won, ev.args.roll, ev.args.paidOut)
+      ));
+      document.getElementById('historyBody').insertAdjacentHTML('beforeend', rows.join(''));
+    }
+  } catch(e){
+    console.warn('loadOlderFeedRows:', e);
+  } finally {
+    feedLoadOlderInFlight = false;
+    updateFeedLoadMoreUI();
+  }
 }
 
 /// Live updates (see subscribeLiveBankroll) call this instead of re-running
@@ -2792,10 +2894,17 @@ async function prependLiveFeedRow({ player, betId, won, roll, paidOut }){
   row.classList.add('row-in');
   body.prepend(row);
 
-  while (body.children.length > MAX_FEED_ROWS) {
-    body.lastElementChild.remove();
+  // Once the user has explicitly loaded older history via the button, stop
+  // auto-pruning - they asked to see more, and unrelated live traffic
+  // trimming it back away out from under them would undo that on its own.
+  if (!feedManuallyExpanded){
+    while (body.children.length > FEED_BATCH_SIZE) {
+      body.lastElementChild.remove();
+    }
   }
 }
+
+document.getElementById('feedLoadMoreBtn').addEventListener('click', loadOlderFeedRows);
 
 document.querySelectorAll('.history .tab-btn').forEach(b => {
   b.addEventListener('click', () => {
@@ -2803,7 +2912,7 @@ document.querySelectorAll('.history .tab-btn').forEach(b => {
     b.classList.add('active');
     currentHistTab = b.dataset.hist;
     renderHistoryHeader();
-    if (currentHistTab === 'mine') renderHistory(); else renderLiveFeed();
+    if (currentHistTab === 'mine'){ updateFeedLoadMoreUI(); renderHistory(); } else renderLiveFeed();
   });
 });
 
