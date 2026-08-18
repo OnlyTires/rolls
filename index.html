@@ -290,6 +290,16 @@
     font-size:0.68rem;font-weight:700;color:var(--brass);font-family:'Rajdhani',sans-serif;
   }
   .asset-select-icon img{width:100%;height:100%;object-fit:cover;display:block;}
+  /* Same shape/source as .asset-select-icon (the "Bet with" dropdown), just
+     a touch smaller to sit comfortably inline in a table row - "similar
+     sizing", not identical. */
+  .asset-cell-icon{
+    width:20px;height:20px;border-radius:50%;flex-shrink:0;background:#1a2a28;
+    display:inline-flex;align-items:center;justify-content:center;overflow:hidden;
+    font-size:0.6rem;font-weight:700;color:var(--brass);font-family:'Rajdhani',sans-serif;
+    vertical-align:middle;margin-right:5px;
+  }
+  .asset-cell-icon img{width:100%;height:100%;object-fit:cover;display:block;}
   .asset-select-label{flex:1;}
   .asset-select-chevron{color:var(--muted-2);font-size:0.72rem;transition:transform 0.15s;}
   .asset-select-btn[aria-expanded="true"] .asset-select-chevron{transform:rotate(180deg);}
@@ -634,7 +644,7 @@
     </div>
     <div class="table-scroll">
       <table>
-        <thead><tr><th>#</th><th>Roll</th><th>Target</th><th>Asset</th><th>Bet Size</th><th>Profit (OTR)</th><th>Result</th><th>Tx</th></tr></thead>
+        <thead id="historyHead"><tr><th>#</th><th>Roll</th><th>Target</th><th>Asset</th><th>Bet Size</th><th>Profit (OTR)</th><th>Total</th><th>Result</th></tr></thead>
         <tbody id="historyBody">
           <tr class="empty-row"><td colspan="8">Connect your wallet to see your bet history.</td></tr>
         </tbody>
@@ -1442,6 +1452,35 @@ function assetIconHtml(symbol, cachedUrl){
   return (symbol || '?').charAt(0).toUpperCase();
 }
 
+/// Asset icon for a history/feed table row - same tokenIconCache/
+/// fetchTokenIcon/assetIconHtml pipeline the "Bet with" dropdown uses (see
+/// renderAssetMenu), so every icon on the page is sourced identically and
+/// stays in sync (an icon resolved here also patches the dropdown's copy of
+/// the same asset, and vice versa, via the shared data-icon-for lookup).
+/// Renders from cache immediately if available; otherwise a letter
+/// placeholder that's swapped in place once fetchAssetCellIcon resolves it.
+function assetCellIconHtml(address, symbol){
+  const key = (address || '').toLowerCase();
+  const cached = tokenIconCache[key];
+  return `<span class="asset-cell-icon" data-icon-for="${address || ''}">${assetIconHtml(symbol, cached)}</span>`;
+}
+
+/// Call once after rendering rows that used assetCellIconHtml for an
+/// address not yet in tokenIconCache - fetches and patches every matching
+/// data-icon-for node in place (table rows AND the dropdown, if it happens
+/// to share the same address) once resolved.
+function fetchAssetCellIcon(address, isNative){
+  if (!address) return; // plain OTR - pre-seeded in tokenIconCache, no lookup needed
+  const key = address.toLowerCase();
+  if (tokenIconCache[key] !== undefined) return;
+  fetchTokenIcon(address, isNative).then(url => {
+    if (!url) return;
+    document.querySelectorAll(`[data-icon-for="${address}"]`).forEach(el => {
+      el.innerHTML = `<img src="${url}" alt="" loading="lazy" />`;
+    });
+  });
+}
+
 /* =========================================================================
    MULTI-ASSET "PAY WITH" SELECTOR
    Two layers:
@@ -1635,12 +1674,25 @@ document.getElementById('claimBtn').addEventListener('click', async () => {
 /* =========================================================================
    CONTRACT CONFIG / STATS
    ========================================================================= */
+// Cached singleton - a fresh ethers.JsonRpcProvider opens its own connection,
+// and every preview update (odds change, bet-amount slider drag, the USD
+// small-print quotes) calls getReadOnlyDice() several times over. Before this
+// was cached, each of those calls minted a brand-new provider, so a single
+// rapid slider drag could pile up a dozen+ simultaneous fresh connections to
+// the public RPC - later ones (including the USD quote) could end up queued
+// behind earlier ones and never resolve in a reasonable time, making the
+// bet-amount USD figure appear to silently "disappear" under fast dragging,
+// especially for thinner-liquidity assets whose preview does more RPC calls
+// per update. One reused provider avoids the pileup entirely.
+let _fallbackProvider = null;
 function getFallbackProvider(){
+  if (_fallbackProvider) return _fallbackProvider;
   // ethers.js v6 treats PulseChain (chain 369) as "unknown" and tries ENS resolution
   // during provider init, which throws UNSUPPORTED_OPERATION. staticNetwork tells
   // ethers exactly what chain this is so it never attempts auto-detect or ENS.
   const net = new ethers.Network(CONFIG.CHAIN_NAME, CONFIG.CHAIN_ID);
-  return new ethers.JsonRpcProvider(CONFIG.RPC_URL, net, { staticNetwork: net });
+  _fallbackProvider = new ethers.JsonRpcProvider(CONFIG.RPC_URL, net, { staticNetwork: net });
+  return _fallbackProvider;
 }
 
 /// Shared read-only contract accessor - falls back to a plain RPC provider
@@ -1649,9 +1701,12 @@ function getFallbackProvider(){
 /// subscription, and the multi-asset preview) should go through this so none
 /// of them silently do nothing just because a wallet hasn't connected -
 /// quotes and on-chain reads don't require a signer.
+let _fallbackDice = null;
 function getReadOnlyDice(){
   if (!CONTRACT_DEPLOYED) return null;
-  return diceContractRO || new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, getFallbackProvider());
+  if (diceContractRO) return diceContractRO;
+  if (!_fallbackDice) _fallbackDice = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, DICE_ABI, getFallbackProvider());
+  return _fallbackDice;
 }
 
 /// Small-print "≈$X.XX" helper - quotes an OTR amount against the
@@ -1940,6 +1995,38 @@ async function runAssetPreview(amountStr, chanceBps){
   }
 
   try {
+    // Kick off the typed-amount USD small print RIGHT AWAY, in parallel with
+    // the quote work below (computeMaxBetInAsset/quoteAssetBet), rather than
+    // chaining it after quoteAssetBet resolves (as it originally did, reusing
+    // quote.expectedOtr once the whole bundle was done). That whole chain
+    // already makes several of its own RPC round trips (some redundant with
+    // each other); tacking the USD quote on at the very end made it
+    // consistently the LAST thing to resolve during a real slider drag -
+    // easy for it to get superseded by the next input event before it ever
+    // lands, which read as the USD figure just not working/disappearing for
+    // slower-to-quote assets. #betAmountUsd lives in static HTML (not
+    // rebuilt via innerHTML each update like betMaxHint below), so firing
+    // this independently is safe - no risk of writing into a DOM node that's
+    // about to be replaced.
+    const amount = parseAssetAmount(amountStr);
+    if (amount > 0n){
+      // Gate on myToken/assetPreviewToken (captured synchronously, in true
+      // call order), not fillBetAmountUsd's own internal token - that one
+      // only gets assigned inside its body, i.e. whenever this .then()
+      // callback actually fires, which is RPC-response-ARRIVAL order, not
+      // request-INITIATION order. Amount changes on every drag tick, so an
+      // older (stale) request's response arriving after a newer one's would
+      // otherwise win the race and blank out/overwrite the correct figure -
+      // this is what made it specifically the bet-amount slider drag that
+      // broke, not the win-chance slider (which requests the same value
+      // repeatedly, so arrival order never mattered there).
+      roDice.quoteAssetToOtr(asset, amount).then(otr => {
+        if (myToken === assetPreviewToken) fillBetAmountUsd(otr);
+      }).catch(()=>{});
+    } else {
+      fillBetAmountUsd(0n);
+    }
+
     // Live max-bet-in-asset figure at this win chance - shown as the hint
     // regardless of what's currently typed, same role as betMaxHint plays
     // for the OTR-direct path.
@@ -1964,10 +2051,11 @@ async function runAssetPreview(amountStr, chanceBps){
     // maxAssetBet is asset-denominated - re-derive its OTR-equivalent ceiling
     // (same call computeMaxBetInAsset already made internally) so the USD
     // quote goes through the same OTR->USD path used everywhere else on the
-    // page, rather than a second asset->USD conversion.
+    // page, rather than a second asset->USD conversion. Fired only now
+    // (after the innerHTML rebuild above, unlike betAmountUsd) since the
+    // <span id="betMaxHintUsd"> it targets doesn't exist until this point.
     AssetQuote.maxOtrBetForWinChance(roDice, chanceBps).then(fillBetMaxUsd).catch(()=>{});
 
-    const amount = parseAssetAmount(amountStr);
     if (amount <= 0n){
       document.getElementById('pvPayout').textContent = '—';
       document.getElementById('pvProfit').textContent = '—';
@@ -1975,18 +2063,14 @@ async function runAssetPreview(amountStr, chanceBps){
       document.getElementById('pvPayoutUsd').textContent = '';
       document.getElementById('pvProfitUsd').textContent = '';
       document.getElementById('pvMaxWinUsd').textContent = '';
-      fillBetAmountUsd(0n);
       return;
     }
 
     const quote = await AssetQuote.quoteAssetBet(roDice, asset, amount, chanceBps);
     if (myToken !== assetPreviewToken) return;
-    // Asset-denominated stake -> USD goes through its own OTR-equivalent
-    // (quote.expectedOtr, the same swap-in quote already used for the
-    // payout/profit math below), not a second direct asset->USD quote -
-    // keeps every USD figure on the page derived through the one OTR->USD
-    // hub (usdApprox/quoteOtrToAssetOut).
-    fillBetAmountUsd(quote.expectedOtr);
+    // betAmountUsd was already kicked off in parallel above (independent
+    // quoteAssetToOtr call) - no need to re-derive/re-fire it from
+    // quote.expectedOtr here.
 
     // A win now SPLITS: MultiRollDice.sol only re-buys the player's original
     // stake in the origin asset - any profit above that pays out as plain
@@ -2231,6 +2315,8 @@ async function resolveAndFinish(betId, amount, winChanceBps, commitBlock2, place
   // is still "eUSDC" in the Asset column, not blank just because no payout
   // swap occurred for it to lose.
   const originAssetSymbol = originAsset ? originAsset.symbol : null;
+  const originAssetAddress = originAsset ? originAsset.address : null;
+  const originAssetIsNative = originAsset ? originAsset.isNative : false;
   const betSizeText = originAsset
     ? `${fmt(ethers.formatUnits(originAsset.betSizeRaw, originAsset.decimals), 4)} ${originAssetSymbol}`
     : `${fmt(formatAmount(amount), 2)} OTR`;
@@ -2246,7 +2332,7 @@ async function resolveAndFinish(betId, amount, winChanceBps, commitBlock2, place
     setStatus(`Bet expired - full stake refunded${assetNote}, no fee taken.`, resolveTx.hash);
     const rec = { refunded:true, betId:betId.toString(), roll:0, target:winChanceBps, amount, payout:0n, won:false,
                   placeTx:placeTxHash, resolveTx:resolveTx.hash, originAssetSymbol, betSizeText,
-                  assetAmountText };
+                  assetAmountText, originAssetAddress, originAssetIsNative };
     myHistory.unshift(rec);
     renderHistory();
     await refreshBalances();
@@ -2271,7 +2357,7 @@ async function resolveAndFinish(betId, amount, winChanceBps, commitBlock2, place
   }
   const rec = { betId:betId.toString(), roll, target:winChanceBps, amount, payout:paidOut, won,
                 placeTx:placeTxHash, resolveTx:resolveTx.hash, originAssetSymbol, betSizeText,
-                assetAmountText, otrProfit: won ? otrProfit : 0n };
+                assetAmountText, otrProfit: won ? otrProfit : 0n, originAssetAddress, originAssetIsNative };
   myHistory.unshift(rec);
   renderHistory();
   await refreshBalances();
@@ -2510,6 +2596,16 @@ document.getElementById('actionBtn').addEventListener('click', async () => {
 /* =========================================================================
    HISTORY
    ========================================================================= */
+/// Live Feed has no Tx column (removed to save horizontal space - the tx
+/// link isn't needed there); Your Bets keeps it. Both tabs share one
+/// <thead>/<tbody>, so the header has to be swapped in on tab change rather
+/// than being static markup.
+function renderHistoryHeader(){
+  document.getElementById('historyHead').innerHTML = currentHistTab === 'mine'
+    ? '<tr><th>#</th><th>Roll</th><th>Target</th><th>Asset</th><th>Bet Size</th><th>Profit (OTR)</th><th>Total</th><th>Result</th><th>Tx</th></tr>'
+    : '<tr><th>#</th><th>Roll</th><th>Target</th><th>Asset</th><th>Bet Size</th><th>Profit (OTR)</th><th>Total</th><th>Result</th></tr>';
+}
+
 /// Green when net positive, red when net negative — shared by both tables.
 function profitCellHtml(profit){
   if (profit === 0n) return `<td>0.00</td>`;
@@ -2519,11 +2615,23 @@ function profitCellHtml(profit){
   return `<td class="${cls}">${sign}${fmt(formatAmount(abs),2)}</td>`;
 }
 
+/// Bet + profit added together, in OTR terms - `amount` is always the OTR
+/// (or OTR-equivalent, for asset-origin bets - see resolveAndFinish/
+/// placeBetWithAsset) amount the bet was actually recorded at on-chain, so
+/// this sum is valid regardless of origin asset. A loss has profit=-amount,
+/// so it naturally nets to exactly 0 (nothing special-cased); a win nets to
+/// the full payout; a refund (profit passed as 0n) nets to the amount
+/// returned. Deliberately plain, unsigned, un-colored - unlike profitCellHtml
+/// this isn't a win/loss indicator, just a running "money back" figure.
+function totalCellHtml(amount, profit){
+  return `<td>${fmt(formatAmount(amount + profit), 2)}</td>`;
+}
+
 function renderHistory(){
   if (currentHistTab !== 'mine') return;
   const body = document.getElementById('historyBody');
   if (!myHistory.length){
-    body.innerHTML = '<tr class="empty-row"><td colspan="8">No bets yet this session.</td></tr>'; return;
+    body.innerHTML = '<tr class="empty-row"><td colspan="9">No bets yet this session.</td></tr>'; return;
   }
   // Asset + Bet Size reflect what was actually WAGERED (see resolveAndFinish's
   // betSizeText/originAssetSymbol) regardless of win/loss/refund - a bet's
@@ -2535,7 +2643,8 @@ function renderHistory(){
     ? ` <span style="color:var(--muted-2);font-size:0.65rem;">(stake returned + ${fmt(formatAmount(r.otrProfit),2)} OTR profit)</span>`
     : '';
   body.innerHTML = myHistory.slice(0,50).map(r => {
-    const assetCell = r.originAssetSymbol || 'OTR';
+    const assetSymbol = r.originAssetSymbol || 'OTR';
+    const assetCell = assetCellIconHtml(r.originAssetAddress, assetSymbol) + assetSymbol;
     const betSizeCell = r.betSizeText || (fmt(formatAmount(r.amount),2) + ' OTR');
     if (r.refunded) return `<tr>
       <td>#${r.betId}</td>
@@ -2544,6 +2653,7 @@ function renderHistory(){
       <td>${assetCell}</td>
       <td>${betSizeCell}</td>
       <td>0.00</td>
+      ${totalCellHtml(r.amount, 0n)}
       <td><span class="pill lose">REFUNDED</span></td>
       <td><a href="${CONFIG.EXPLORER_URL}/tx/${r.resolveTx}" target="_blank" rel="noopener">tx</a></td>
     </tr>`;
@@ -2555,10 +2665,12 @@ function renderHistory(){
       <td>${assetCell}</td>
       <td>${betSizeCell}</td>
       ${profitCellHtml(profit)}
+      ${totalCellHtml(r.amount, profit)}
       <td><span class="pill ${r.won?'win':'lose'}">${r.won?'WIN':'LOSS'}</span>${winSplitNote(r)}</td>
       <td><a href="${CONFIG.EXPLORER_URL}/tx/${r.resolveTx}" target="_blank" rel="noopener">tx</a></td>
     </tr>`;
   }).join('');
+  myHistory.slice(0,50).forEach(r => fetchAssetCellIcon(r.originAssetAddress, r.originAssetIsNative));
 }
 
 const MAX_FEED_ROWS = 50;
@@ -2570,8 +2682,8 @@ const MAX_FEED_ROWS = 50;
 /// The leftmost column shows the redacted player address (short(player))
 /// rather than the bet ID — order in the list is what conveys "most recent",
 /// not a number, so nothing depends on the ID being visible.
-async function feedRowHtml(ro, player, betId, won, roll, paidOut, txHash){
-  let targetCell = '—', assetCell = 'OTR', betSizeCell = '—', profitCell = '<td>—</td>';
+async function feedRowHtml(ro, player, betId, won, roll, paidOut){
+  let targetCell = '—', assetCell = 'OTR', betSizeCell = '—', profitCell = '<td>—</td>', totalCell = '<td>—</td>';
   try {
     const [bet, originAssetAddr] = await Promise.all([
       ro.bets(betId),
@@ -2580,6 +2692,7 @@ async function feedRowHtml(ro, player, betId, won, roll, paidOut, txHash){
     targetCell = '&lt; ' + (Number(bet.winChanceBps)/100).toFixed(2);
     const profit = won ? (paidOut - bet.amount) : -bet.amount;
     profitCell = profitCellHtml(profit);
+    totalCell = totalCellHtml(bet.amount, profit);
 
     if (originAssetAddr && originAssetAddr !== ethers.ZeroAddress){
       // Public feed row for ANY player's bet - no client-side "typed amount"
@@ -2588,11 +2701,13 @@ async function feedRowHtml(ro, player, betId, won, roll, paidOut, txHash){
       const info = supportedAssetsCache.find(a => a.address.toLowerCase() === originAssetAddr.toLowerCase());
       const symbol = info ? info.symbol : short(originAssetAddr);
       const decimals = info ? info.decimals : 18;
+      const isNative = info ? info.isNative : false;
       const betSizeRaw = await ro.betOriginAssetAmount(betId).catch(() => 0n);
-      assetCell = symbol;
+      assetCell = assetCellIconHtml(originAssetAddr, symbol) + symbol;
       betSizeCell = fmt(ethers.formatUnits(betSizeRaw, decimals), 4) + ' ' + symbol;
+      fetchAssetCellIcon(originAssetAddr, isNative);
     } else {
-      assetCell = 'OTR';
+      assetCell = assetCellIconHtml('', 'OTR') + 'OTR';
       betSizeCell = fmt(ethers.formatUnits(bet.amount, tokenDecimals), 2) + ' OTR';
     }
   } catch(e){}
@@ -2603,8 +2718,8 @@ async function feedRowHtml(ro, player, betId, won, roll, paidOut, txHash){
     <td>${assetCell}</td>
     <td>${betSizeCell}</td>
     ${profitCell}
+    ${totalCell}
     <td><span class="pill ${won?'win':'lose'}">${won?'WIN':'LOSS'}</span></td>
-    <td><a href="${CONFIG.EXPLORER_URL}/tx/${txHash}" target="_blank" rel="noopener">tx</a></td>
   </tr>`;
 }
 
@@ -2650,7 +2765,7 @@ async function renderLiveFeed(){
     const recent = events.slice(-MAX_FEED_ROWS).reverse();
     if (!recent.length){ body.innerHTML = '<tr class="empty-row"><td colspan="8">No bets yet.</td></tr>'; return; }
     const rows = await Promise.all(recent.map((ev) =>
-      feedRowHtml(ro, ev.args.player, ev.args.betId, ev.args.won, ev.args.roll, ev.args.paidOut, ev.transactionHash)
+      feedRowHtml(ro, ev.args.player, ev.args.betId, ev.args.won, ev.args.roll, ev.args.paidOut)
     ));
     body.innerHTML = rows.join('');
   } catch(e){ body.innerHTML = '<tr class="empty-row"><td colspan="8">Could not load feed.</td></tr>'; }
@@ -2662,11 +2777,11 @@ async function renderLiveFeed(){
 /// just the newest result appearing. This inserts one row at the top with a
 /// slide-in animation and trims the oldest row past the cap, so the rest of
 /// the list just settles down a slot the normal way a table naturally does.
-async function prependLiveFeedRow({ player, betId, won, roll, paidOut, transactionHash }){
+async function prependLiveFeedRow({ player, betId, won, roll, paidOut }){
   if (currentHistTab !== 'feed') return;
   const body = document.getElementById('historyBody');
   const ro = getReadOnlyDice();
-  const html = await feedRowHtml(ro, player, betId, won, roll, paidOut, transactionHash);
+  const html = await feedRowHtml(ro, player, betId, won, roll, paidOut);
 
   const placeholder = body.querySelector('.empty-row');
   if (placeholder) placeholder.remove();
@@ -2687,6 +2802,7 @@ document.querySelectorAll('.history .tab-btn').forEach(b => {
     document.querySelectorAll('.history .tab-btn').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
     currentHistTab = b.dataset.hist;
+    renderHistoryHeader();
     if (currentHistTab === 'mine') renderHistory(); else renderLiveFeed();
   });
 });
