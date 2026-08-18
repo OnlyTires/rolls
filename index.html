@@ -567,6 +567,7 @@
         <div class="field">
           <label>Bet amount <span class="hint" id="tokenSymLabel">OTR</span></label>
           <input type="number" id="betAmount" value="10" min="0" step="any" />
+          <input type="range" id="betAmountSlider" class="chance-slider" min="0" max="10" step="any" value="10" />
           <div class="quick">
             <button data-op="half">½</button>
             <button data-op="double">2×</button>
@@ -1794,6 +1795,13 @@ function updatePreview(){
   // multiplier field, quick-% buttons, or the periodic config refresh) —
   // updatePreview() is the one function all of those paths funnel through.
   document.getElementById('winChanceSlider').value = chancePct;
+  // Same for the bet-amount slider whenever the text box itself changed - its
+  // `max` ceiling is kept current separately below (OTR path) / in
+  // runAssetPreview (asset path), since that depends on the live pool state,
+  // not just what's typed.
+  const amountSliderEl = document.getElementById('betAmountSlider');
+  const amountNum = parseFloat(amountStr || '0');
+  if (!Number.isNaN(amountNum)) amountSliderEl.value = amountNum;
 
   const chanceBps = BigInt(Math.round(chancePct * 100));
   document.getElementById('pvChance').textContent = chancePct ? chancePct.toFixed(2) : '—';
@@ -1812,6 +1820,11 @@ function updatePreview(){
   errEl.textContent = '';
 
   const [maxWin, effMaxBet, exposureCap] = computeMaxWin(chanceBps);
+  // The slider's ceiling tracks the live max-for-this-chance on every odds
+  // change, same as the hint text below - but (deliberately, unlike the old
+  // fillMaxBetAmount()-on-every-odds-change behavior) the current amount
+  // value itself is never touched here, only the slider's range.
+  amountSliderEl.max = formatAmount(effMaxBet);
 
   const betMaxHint = document.getElementById('betMaxHint');
   if (maxWin > 0n){
@@ -1898,6 +1911,10 @@ async function runAssetPreview(amountStr, chanceBps){
     if (myToken !== assetPreviewToken) return; // a newer call has since superseded this one
 
     const chancePct = Number(chanceBps) / 100;
+    // Same ceiling-only tracking as the OTR-direct path - the slider's range
+    // follows the live max for this chance/asset, the typed amount is never
+    // force-reset.
+    document.getElementById('betAmountSlider').max = ethers.formatUnits(maxAssetBet, payAssetDecimals);
     document.getElementById('pvMaxBetSub').textContent =
       fmt(ethers.formatUnits(maxAssetBet, payAssetDecimals), 4) + ' ' + payAssetSymbol + ' max bet at ' + chancePct.toFixed(2) + '% win chance';
     // Kept deliberately plain - the player is just betting/winning in their
@@ -1958,12 +1975,16 @@ async function runAssetPreview(amountStr, chanceBps){
 // Fills Bet Amount with the current max-bet figure for whatever's currently
 // selected (OTR-direct or the chosen pay asset) at the current win chance -
 // the OTR-direct figure is a local formula; a pay-asset figure needs a live
-// router quote, same as the rest of the asset preview path. Called both by
-// the explicit "max" quick button AND automatically whenever the odds
-// change or the pay asset changes (see the event listeners below) - NOT
-// wired into updatePreview() or the periodic refreshConfig() poll, since
-// those fire on every keystroke/timer tick and would otherwise stomp a bet
-// amount the player deliberately typed in themselves.
+// router quote, same as the rest of the asset preview path. Deliberately
+// NOT called on every odds change anymore (the bet-amount slider + text box
+// are the primary control now, independent of odds) - only at genuine
+// "fresh start" moments: initial page load, wallet connect, switching the
+// pay asset, and right after a bet resolves (see refreshConfig(true) and
+// this function's own call sites). Also not wired into updatePreview() or
+// the periodic refreshConfig() poll, since those fire on every
+// keystroke/timer tick and would otherwise stomp a bet amount the player
+// deliberately typed in themselves. The slider's `max` ceiling, separately,
+// DOES still track odds changes live - see updatePreview()/runAssetPreview().
 async function fillMaxBetAmount(){
   const el = document.getElementById('betAmount');
   const chanceBps = BigInt(Math.round(parseFloat(document.getElementById('winChance').value || '0') * 100));
@@ -1997,37 +2018,42 @@ document.querySelectorAll('#manualPanel .quick button[data-op]').forEach(b=>{
     if (b.dataset.op === 'double') { el.value = (v*2).toFixed(6); updatePreview(); return; }
     // 'max' only shows when the wallet's actual balance is BELOW the pool
     // max (updateMaxBalanceButtonVisibility) - fills that real balance, not
-    // the pool ceiling (fillMaxBetAmount already auto-fills the ceiling on
-    // every odds/asset change, so this button existing at all means the
-    // ceiling isn't what the player can actually afford).
+    // the pool ceiling.
     const balance = payAssetAddress ? payAssetBalanceRaw : otrBalanceRaw;
     el.value = payAssetAddress ? ethers.formatUnits(balance, payAssetDecimals) : formatAmount(balance);
     updatePreview();
   });
 });
 document.querySelectorAll('#manualPanel .quick button[data-chance]').forEach(b=>{
-  b.addEventListener('click', async ()=>{
+  b.addEventListener('click', ()=>{
     document.getElementById('winChance').value = b.dataset.chance;
     onWinChanceInput();
-    await fillMaxBetAmount();
     updatePreview();
   });
 });
 document.getElementById('betAmount').addEventListener('input', updatePreview);
-document.getElementById('winChance').addEventListener('input', async () => {
+// Bet amount is now primarily driven by its own slider + text box together -
+// odds changes (win chance text, multiplier text, the odds slider, the quick
+// chance buttons) only move the slider's max ceiling (see updatePreview /
+// runAssetPreview above), they no longer reset the amount itself to max.
+// Auto-filling to max still happens, deliberately, only on: initial page
+// load, wallet connect, switching the pay asset, and right after a bet
+// resolves (see the refreshConfig(true)/fillMaxBetAmount() call sites).
+document.getElementById('betAmountSlider').addEventListener('input', () => {
+  document.getElementById('betAmount').value = document.getElementById('betAmountSlider').value;
+  updatePreview();
+});
+document.getElementById('winChance').addEventListener('input', () => {
   onWinChanceInput();
-  await fillMaxBetAmount();
   updatePreview();
 });
-document.getElementById('multiplier').addEventListener('input', async () => {
+document.getElementById('multiplier').addEventListener('input', () => {
   onMultiplierInput();
-  await fillMaxBetAmount();
   updatePreview();
 });
-document.getElementById('winChanceSlider').addEventListener('input', async () => {
+document.getElementById('winChanceSlider').addEventListener('input', () => {
   document.getElementById('winChance').value = document.getElementById('winChanceSlider').value;
   onWinChanceInput();
-  await fillMaxBetAmount();
   updatePreview();
 });
 
@@ -2352,7 +2378,7 @@ async function checkPendingBet(){
 async function renderPendingBetUI(){
   const panel = document.getElementById('pendingBetPanel');
   const btn   = document.getElementById('actionBtn');
-  const lockFields = ['betAmount','winChance','multiplier'];
+  const lockFields = ['betAmount','betAmountSlider','winChance','winChanceSlider','multiplier'];
 
   if (!pendingBet){
     panel.style.display = 'none';
